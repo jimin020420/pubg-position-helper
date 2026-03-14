@@ -119,11 +119,11 @@ const MapCanvas = ({ onZoneChange, heatPoints = [], zone }) => {
   return (
     <div className="map-wrapper">
       <img
-        src="/maps/erangel.jpg"
+        src="/maps/erangel.png"
         alt="Erangel Map"
         className="map-image"
         draggable={false}
-        onError={(e) => { e.target.style.display = "none"; }}
+        onError={(e) => { e.target.style.background = "#1e3a2f"; }}
       />
       <canvas
         ref={canvasRef}

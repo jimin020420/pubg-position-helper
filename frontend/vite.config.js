@@ -8,7 +8,7 @@ export default defineConfig({
     proxy: {
       // 프론트에서 /api/... 요청 → 백엔드 localhost:8000으로 전달
       "/api": {
-        target: "http://localhost:8000",
+        target: "http://127.0.0.1:8000",
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, ""),
       },

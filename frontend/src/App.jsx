@@ -6,6 +6,7 @@ import ClusterMarkers from "./components/ClusterMarkers";
 import "./App.css";
 
 const RANK_COLORS = ["#ff4444", "#ff9900", "#ffdd00", "#44ff88", "#44ccff"];
+const API = "http://127.0.0.1:8000";
 
 function App() {
   const [phase, setPhase] = useState(1);
@@ -21,7 +22,7 @@ function App() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/positions/Erangel/${p}`);
+      const res = await fetch(`${API}/positions/Erangel/${p}`);
       if (!res.ok) throw new Error(`서버 오류: ${res.status}`);
       const data = await res.json();
       setPoints(data.points);
@@ -40,7 +41,7 @@ function App() {
   const fetchZoneData = useCallback(async (newZone, currentPhase) => {
     if (!newZone) { setStats(null); setClusters([]); return; }
     const { cx, cy, radius } = newZone;
-    const base = `/api/positions/Erangel/${currentPhase}`;
+    const base = `${API}/positions/Erangel/${currentPhase}`;
     const qs = `cx=${cx}&cy=${cy}&radius=${radius}`;
     setZoneLoading(true);
     try {

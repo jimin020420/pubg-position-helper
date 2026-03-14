@@ -1,42 +1,27 @@
 import { useEffect, useRef } from "react";
-import h337 from "heatmap.js";
 import { gameToPixel } from "./MapCanvas";
 
 const MAP_DISPLAY_SIZE = 700;
+const POINT_RADIUS = 28;
 
 /**
- * heatmap.js를 활용해 포지션 데이터를 히트맵으로 시각화
+ * Canvas 기반 히트맵 (heatmap.js 대체)
  * Props:
  *   points: [{ x, y }] - 게임 좌표 배열
  *   zone: { cx, cy, radius } | null - 현재 자기장 원 (게임 좌표)
  */
 const HeatmapOverlay = ({ points = [], zone = null }) => {
-  const containerRef = useRef(null);
-  const heatmapRef = useRef(null);
+  const canvasRef = useRef(null);
 
-  // heatmap 인스턴스 초기화 (최초 1회)
   useEffect(() => {
-    if (!containerRef.current) return;
-    heatmapRef.current = h337.create({
-      container: containerRef.current,
-      radius: 25,
-      maxOpacity: 0.7,
-      minOpacity: 0,
-      blur: 0.85,
-      gradient: {
-        0.2: "#0000ff",
-        0.5: "#00ff00",
-        0.8: "#ffff00",
-        1.0: "#ff0000",
-      },
-    });
-  }, []);
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    ctx.clearRect(0, 0, MAP_DISPLAY_SIZE, MAP_DISPLAY_SIZE);
 
-  // points가 바뀔 때마다 히트맵 데이터 업데이트
-  useEffect(() => {
-    if (!heatmapRef.current) return;
+    if (points.length === 0) return;
 
-    // 원이 지정된 경우 원 안의 포인트만, 아니면 전체
+    // zone이 있으면 원 안 포인트만, 없으면 전체
     const filtered = zone
       ? points.filter(({ x, y }) => {
           const { px, py } = gameToPixel(x, y);
@@ -46,27 +31,30 @@ const HeatmapOverlay = ({ points = [], zone = null }) => {
         })
       : points;
 
-    const heatData = filtered.map(({ x, y }) => {
+    // 각 포인트마다 방사형 그라디언트로 열 효과
+    filtered.forEach(({ x, y }) => {
       const { px, py } = gameToPixel(x, y);
-      return { x: Math.round(px), y: Math.round(py), value: 1 };
-    });
-
-    heatmapRef.current.setData({
-      max: Math.max(1, Math.ceil(heatData.length / 5)),
-      data: heatData,
+      const grad = ctx.createRadialGradient(px, py, 0, px, py, POINT_RADIUS);
+      grad.addColorStop(0, "rgba(255, 0, 0, 0.25)");
+      grad.addColorStop(0.4, "rgba(255, 165, 0, 0.12)");
+      grad.addColorStop(1, "rgba(0, 0, 255, 0)");
+      ctx.beginPath();
+      ctx.arc(px, py, POINT_RADIUS, 0, Math.PI * 2);
+      ctx.fillStyle = grad;
+      ctx.fill();
     });
   }, [points, zone]);
 
   return (
-    <div
-      ref={containerRef}
+    <canvas
+      ref={canvasRef}
+      width={MAP_DISPLAY_SIZE}
+      height={MAP_DISPLAY_SIZE}
       style={{
         position: "absolute",
         top: 0,
         left: 0,
-        width: MAP_DISPLAY_SIZE,
-        height: MAP_DISPLAY_SIZE,
-        pointerEvents: "none", // 클릭 이벤트는 Canvas로 통과
+        pointerEvents: "none",
       }}
     />
   );

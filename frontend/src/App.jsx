@@ -1,55 +1,62 @@
-import { useState, useMemo } from "react";
+import { useState, useEffect, useCallback } from "react";
 import MapCanvas from "./components/MapCanvas";
 import PhaseSelector from "./components/PhaseSelector";
 import HeatmapOverlay from "./components/HeatmapOverlay";
 import "./App.css";
 
-// ─── Mock 데이터 (Step 4 이후 실제 API로 교체) ───────────────────────────────
-function generateMockPoints(count, xMin, xMax, yMin, yMax) {
-  const clusters = [
-    { x: xMin + (xMax - xMin) * 0.2, y: yMin + (yMax - yMin) * 0.3 },
-    { x: xMin + (xMax - xMin) * 0.6, y: yMin + (yMax - yMin) * 0.5 },
-    { x: xMin + (xMax - xMin) * 0.4, y: yMin + (yMax - yMin) * 0.7 },
-    { x: xMin + (xMax - xMin) * 0.8, y: yMin + (yMax - yMin) * 0.2 },
-  ];
-  const spread = (xMax - xMin) * 0.08;
-  return Array.from({ length: count }, () => {
-    const c = clusters[Math.floor(Math.random() * clusters.length)];
-    return {
-      x: c.x + (Math.random() - 0.5) * spread,
-      y: c.y + (Math.random() - 0.5) * spread,
-    };
-  });
-}
-
-const MOCK_POSITIONS = {
-  1: generateMockPoints(200, 100000, 700000, 100000, 700000),
-  2: generateMockPoints(180, 150000, 650000, 150000, 650000),
-  3: generateMockPoints(150, 200000, 600000, 200000, 600000),
-  4: generateMockPoints(120, 250000, 560000, 250000, 560000),
-  5: generateMockPoints(100, 300000, 510000, 300000, 510000),
-  6: generateMockPoints(80,  350000, 470000, 350000, 470000),
-  7: generateMockPoints(60,  380000, 440000, 380000, 440000),
-  8: generateMockPoints(40,  400000, 420000, 400000, 420000),
-};
-// ─────────────────────────────────────────────────────────────────────────────
-
 function App() {
   const [phase, setPhase] = useState(1);
-  const [zone, setZone] = useState(null); // { cx, cy, radius } 게임 좌표
+  const [zone, setZone] = useState(null);      // { cx, cy, radius } 게임 좌표
+  const [points, setPoints] = useState([]);     // [{ x, y }]
+  const [stats, setStats] = useState(null);     // { inside, percent, total }
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
-  const points = useMemo(() => MOCK_POSITIONS[phase] ?? [], [phase]);
+  // 페이즈가 바뀔 때마다 전체 포지션 데이터 fetch
+  const fetchPositions = useCallback(async (p) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/positions/Erangel/${p}`);
+      if (!res.ok) throw new Error(`서버 오류: ${res.status}`);
+      const data = await res.json();
+      setPoints(data.points);
+    } catch {
+      setError("백엔드 서버에 연결할 수 없습니다. 서버가 실행 중인지 확인하세요.");
+      setPoints([]);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  const insideCount = useMemo(() => {
-    if (!zone) return 0;
-    return points.filter(({ x, y }) =>
-      Math.hypot(x - zone.cx, y - zone.cy) <= zone.radius
-    ).length;
-  }, [points, zone]);
+  useEffect(() => {
+    fetchPositions(phase);
+  }, [phase, fetchPositions]);
+
+  // 자기장 원이 확정되면 zone 통계 fetch
+  const fetchZoneStats = useCallback(async (newZone, currentPhase) => {
+    if (!newZone) { setStats(null); return; }
+    try {
+      const { cx, cy, radius } = newZone;
+      const url = `/api/positions/Erangel/${currentPhase}/zone?cx=${cx}&cy=${cy}&radius=${radius}`;
+      const res = await fetch(url);
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      setStats({ inside: data.inside, percent: data.percent, total: data.total });
+    } catch {
+      setStats(null);
+    }
+  }, []);
+
+  const handleZoneChange = (newZone) => {
+    setZone(newZone);
+    fetchZoneStats(newZone, phase);
+  };
 
   const handlePhaseChange = (newPhase) => {
     setPhase(newPhase);
     setZone(null);
+    setStats(null);
   };
 
   return (
@@ -61,9 +68,11 @@ function App() {
 
       <main className="app-main">
         <section className="map-section">
+          {error && <div className="error-banner">{error}</div>}
           <div style={{ position: "relative", display: "inline-block" }}>
-            <MapCanvas onZoneChange={setZone} heatPoints={points} />
+            <MapCanvas onZoneChange={handleZoneChange} heatPoints={points} />
             <HeatmapOverlay points={points} zone={zone} />
+            {loading && <div className="map-loading">데이터 로딩 중...</div>}
           </div>
         </section>
 
@@ -76,20 +85,15 @@ function App() {
               <span>전체 포지션 수</span>
               <strong>{points.length}개</strong>
             </div>
-            {zone && (
+            {stats && (
               <>
                 <div className="stat-row highlight">
                   <span>자기장 안 포지션</span>
-                  <strong>{insideCount}개</strong>
+                  <strong>{stats.inside}개</strong>
                 </div>
                 <div className="stat-row highlight">
                   <span>추천 확률</span>
-                  <strong>
-                    {points.length > 0
-                      ? Math.round((insideCount / points.length) * 100)
-                      : 0}
-                    %
-                  </strong>
+                  <strong>{stats.percent}%</strong>
                 </div>
               </>
             )}
@@ -106,7 +110,7 @@ function App() {
           </div>
 
           <p className="data-notice">
-            * 현재는 Mock 데이터입니다.<br />
+            * 현재는 Seed 데이터입니다.<br />
             Step 4 완료 후 실제 상위 랭커 데이터로 교체됩니다.
           </p>
         </aside>

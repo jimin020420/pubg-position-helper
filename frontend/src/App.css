@@ -211,6 +211,31 @@
   line-height: 1.5;
 }
 
+/* 에러 배너 */
+.error-banner {
+  background: #3d1a1a;
+  border: 1px solid #f85149;
+  color: #f85149;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 0.85rem;
+  margin-bottom: 10px;
+}
+
+/* 로딩 오버레이 */
+.map-loading {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0, 0, 0, 0.7);
+  color: #58a6ff;
+  font-size: 0.9rem;
+  padding: 10px 20px;
+  border-radius: 8px;
+  pointer-events: none;
+}
+
 /* 데이터 안내 */
 .data-notice {
   font-size: 0.75rem;

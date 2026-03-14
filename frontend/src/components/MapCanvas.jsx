@@ -17,65 +17,78 @@ export function pixelToGame(px, py) {
   };
 }
 
+// 에란겔 페이즈별 자기장 반지름 (게임 좌표 cm)
+// 출처: PUBG 공식 White circle diameter → radius = diameter/2 * 100
+// Phase 1: 4564.7m  2: 2967.1m  3: 1483.5m  4: 741.8m
+// Phase 5: 370.9m   6: 185.4m   7: 92.7m    8: 46.4m
+const PHASE_RADII = {
+  1: 228235,
+  2: 148355,
+  3:  74175,
+  4:  37090,
+  5:  18545,
+  6:   9270,
+  7:   4635,
+  8:   2320,
+};
+
 /**
- * 에란겔 맵 이미지 위에 Canvas 오버레이
  * Props:
  *   onZoneChange({ cx, cy, radius }) - 원 확정 시 호출 (게임 좌표)
- *   heatPoints: [{ x, y }]            - 원 안 강조용 포인트 (게임 좌표)
- *   zone: { cx, cy, radius } | null   - 외부 zone 상태 (null이면 원 초기화)
+ *   heatPoints: [{ x, y }]
+ *   zone: { cx, cy, radius } | null
+ *   phase: number (1~8)
+ *   zoom: number (1~4)
+ *   onPanDelta({ dx, dy }) - Ctrl+드래그 패닝 델타
  */
-const MapCanvas = ({ onZoneChange, heatPoints = [], zone }) => {
+const MapCanvas = ({ onZoneChange, heatPoints = [], zone, phase = 1, zoom = 1, onPanDelta }) => {
   const canvasRef = useRef(null);
   const [isDragging, setIsDragging] = useState(false);
   const dragStart = useRef(null);
-  const [circle, setCircle] = useState(null); // px 기준 내부 상태
+  const isPanning = useRef(false);
+  const panStart = useRef(null);
+  const [circle, setCircle] = useState(null);
 
-  // 외부에서 zone이 null로 바뀌면 내부 원도 초기화
   useEffect(() => {
     if (zone === null) setCircle(null);
   }, [zone]);
 
-  // Canvas 그리기: 자기장 원 + 원 안 포인트 강조
-  const draw = useCallback(
-    (ctx, currentCircle) => {
-      ctx.clearRect(0, 0, MAP_DISPLAY_SIZE, MAP_DISPLAY_SIZE);
+  const draw = useCallback((ctx, currentCircle) => {
+    ctx.clearRect(0, 0, MAP_DISPLAY_SIZE, MAP_DISPLAY_SIZE);
+    if (!currentCircle) return;
 
-      if (!currentCircle) return;
+    const { cx, cy, radius } = currentCircle;
 
-      const { cx, cy, radius } = currentCircle;
+    // 원 바깥 어둡게
+    ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
+    ctx.fillRect(0, 0, MAP_DISPLAY_SIZE, MAP_DISPLAY_SIZE);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.clearRect(0, 0, MAP_DISPLAY_SIZE, MAP_DISPLAY_SIZE);
+    ctx.restore();
 
-      // 원 바깥 영역 어둡게 (비네팅 효과)
-      ctx.fillStyle = "rgba(0, 0, 0, 0.35)";
-      ctx.fillRect(0, 0, MAP_DISPLAY_SIZE, MAP_DISPLAY_SIZE);
-      ctx.save();
-      ctx.beginPath();
-      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-      ctx.clip();
-      ctx.clearRect(0, 0, MAP_DISPLAY_SIZE, MAP_DISPLAY_SIZE);
-      ctx.restore();
+    // 자기장 원 테두리
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+    ctx.strokeStyle = "#00e5ff";
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash([8, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
 
-      // 자기장 원 테두리 (점선 스타일)
-      ctx.beginPath();
-      ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-      ctx.strokeStyle = "#00e5ff";
-      ctx.lineWidth = 2.5;
-      ctx.setLineDash([8, 4]);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      // 원 안 포인트 강조 (노란 점)
-      heatPoints.forEach(({ x, y }) => {
-        const { px, py } = gameToPixel(x, y);
-        if (Math.hypot(px - cx, py - cy) <= radius) {
-          ctx.beginPath();
-          ctx.arc(px, py, 4, 0, Math.PI * 2);
-          ctx.fillStyle = "rgba(255, 220, 0, 0.75)";
-          ctx.fill();
-        }
-      });
-    },
-    [heatPoints]
-  );
+    // 원 안 포인트 강조
+    heatPoints.forEach(({ x, y }) => {
+      const { px, py } = gameToPixel(x, y);
+      if (Math.hypot(px - cx, py - cy) <= radius) {
+        ctx.beginPath();
+        ctx.arc(px, py, 4, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(255, 220, 0, 0.75)";
+        ctx.fill();
+      }
+    });
+  }, [heatPoints]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -83,17 +96,34 @@ const MapCanvas = ({ onZoneChange, heatPoints = [], zone }) => {
     draw(canvas.getContext("2d"), circle);
   }, [circle, draw]);
 
+  // zoom 적용된 canvas 내부 좌표 계산
   const getPos = (e) => {
     const rect = canvasRef.current.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    return {
+      x: (e.clientX - rect.left) / zoom,
+      y: (e.clientY - rect.top) / zoom,
+    };
   };
 
   const handleMouseDown = (e) => {
+    if (e.ctrlKey) {
+      isPanning.current = true;
+      panStart.current = { x: e.clientX, y: e.clientY };
+      return;
+    }
     dragStart.current = getPos(e);
     setIsDragging(true);
   };
 
   const handleMouseMove = (e) => {
+    if (isPanning.current && panStart.current && onPanDelta) {
+      onPanDelta({
+        dx: e.clientX - panStart.current.x,
+        dy: e.clientY - panStart.current.y,
+      });
+      panStart.current = { x: e.clientX, y: e.clientY };
+      return;
+    }
     if (!isDragging || !dragStart.current) return;
     const pos = getPos(e);
     const r = Math.hypot(pos.x - dragStart.current.x, pos.y - dragStart.current.y);
@@ -101,19 +131,42 @@ const MapCanvas = ({ onZoneChange, heatPoints = [], zone }) => {
   };
 
   const handleMouseUp = (e) => {
+    if (isPanning.current) {
+      isPanning.current = false;
+      panStart.current = null;
+      return;
+    }
     if (!isDragging || !dragStart.current) return;
     setIsDragging(false);
     const pos = getPos(e);
     const r = Math.hypot(pos.x - dragStart.current.x, pos.y - dragStart.current.y);
-    if (r > 10) {
-      const finalCircle = { cx: dragStart.current.x, cy: dragStart.current.y, radius: r };
-      setCircle(finalCircle);
-      if (onZoneChange) {
-        const center = pixelToGame(dragStart.current.x, dragStart.current.y);
-        onZoneChange({ cx: center.x, cy: center.y, radius: (r / MAP_DISPLAY_SIZE) * GAME_SIZE });
-      }
+
+    // 드래그 거리 짧으면 클릭 → 페이즈 기본 반지름 사용
+    let pixelRadius;
+    if (r <= 10) {
+      const gameRadius = PHASE_RADII[phase] ?? PHASE_RADII[1];
+      pixelRadius = (gameRadius / GAME_SIZE) * MAP_DISPLAY_SIZE;
+    } else {
+      pixelRadius = r;
+    }
+
+    const finalCircle = { cx: dragStart.current.x, cy: dragStart.current.y, radius: pixelRadius };
+    setCircle(finalCircle);
+    if (onZoneChange) {
+      const center = pixelToGame(finalCircle.cx, finalCircle.cy);
+      onZoneChange({
+        cx: center.x,
+        cy: center.y,
+        radius: (finalCircle.radius / MAP_DISPLAY_SIZE) * GAME_SIZE,
+      });
     }
     dragStart.current = null;
+  };
+
+  const handleMouseLeave = () => {
+    setIsDragging(false);
+    isPanning.current = false;
+    panStart.current = null;
   };
 
   return (
@@ -133,12 +186,12 @@ const MapCanvas = ({ onZoneChange, heatPoints = [], zone }) => {
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
-        onMouseLeave={() => setIsDragging(false)}
+        onMouseLeave={handleMouseLeave}
       />
       <p className="map-hint">
         {circle
-          ? "다시 그리려면 새로 드래그하세요"
-          : "클릭 + 드래그로 현재 자기장 범위를 지정하세요"}
+          ? "드래그로 크기 재조정 · Ctrl+드래그로 이동 · 휠로 확대"
+          : "클릭 → 페이즈 자기장 배치 · 드래그 → 직접 크기 지정"}
       </p>
     </div>
   );

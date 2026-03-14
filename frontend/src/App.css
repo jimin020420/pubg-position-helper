@@ -43,13 +43,37 @@
   gap: 10px;
 }
 
-.map-wrapper {
+.map-outer {
   position: relative;
-  display: inline-block;
+  width: 700px;
+  height: 700px;
+  overflow: hidden;
   border: 2px solid #21262d;
   border-radius: 8px;
-  overflow: hidden;
   box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+  cursor: crosshair;
+}
+
+.map-wrapper {
+  position: relative;
+  display: block;
+  width: 700px;
+  height: 700px;
+}
+
+.zoom-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #58a6ff;
+  font-size: 0.72rem;
+  padding: 4px 10px;
+  border-radius: 10px;
+  pointer-events: auto;
+  cursor: pointer;
+  z-index: 10;
+  user-select: none;
 }
 
 .map-image {

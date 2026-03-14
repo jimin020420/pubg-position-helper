@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import MapCanvas from "./components/MapCanvas";
 import PhaseSelector from "./components/PhaseSelector";
 import HeatmapOverlay from "./components/HeatmapOverlay";
@@ -7,6 +7,7 @@ import "./App.css";
 
 const RANK_COLORS = ["#ff4444", "#ff9900", "#ffdd00", "#44ff88", "#44ccff"];
 const API = "http://127.0.0.1:8000";
+const MAP_SIZE = 700;
 
 function App() {
   const [phase, setPhase] = useState(1);
@@ -17,6 +18,59 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [zoneLoading, setZoneLoading] = useState(false);
   const [error, setError] = useState(null);
+
+  // 줌/패닝 상태
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const mapContainerRef = useRef(null);
+  const zoomRef = useRef(zoom);
+  const panRef = useRef(pan);
+  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+  useEffect(() => { panRef.current = pan; }, [pan]);
+
+  const clampPan = (x, y, z) => ({
+    x: Math.min(0, Math.max(MAP_SIZE * (1 - z), x)),
+    y: Math.min(0, Math.max(MAP_SIZE * (1 - z), y)),
+  });
+
+  // 마우스 휠 줌 (passive: false 필요)
+  useEffect(() => {
+    const el = mapContainerRef.current;
+    if (!el) return;
+    const handler = (e) => {
+      e.preventDefault();
+      const currentZoom = zoomRef.current;
+      const currentPan = panRef.current;
+      const rect = el.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+
+      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+      const newZoom = Math.min(4, Math.max(1, currentZoom * factor));
+
+      if (newZoom === 1) {
+        setZoom(1);
+        setPan({ x: 0, y: 0 });
+        return;
+      }
+
+      const newPanX = mouseX - (mouseX - currentPan.x) * (newZoom / currentZoom);
+      const newPanY = mouseY - (mouseY - currentPan.y) * (newZoom / currentZoom);
+      const clamped = clampPan(newPanX, newPanY, newZoom);
+      setZoom(newZoom);
+      setPan(clamped);
+    };
+    el.addEventListener("wheel", handler, { passive: false });
+    return () => el.removeEventListener("wheel", handler);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Ctrl+드래그 패닝 콜백 (MapCanvas에서 호출)
+  const handlePanDelta = useCallback(({ dx, dy }) => {
+    setZoom(z => {
+      setPan(p => clampPan(p.x + dx, p.y + dy, z));
+      return z;
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const fetchPositions = useCallback(async (p) => {
     setLoading(true);
@@ -92,13 +146,43 @@ function App() {
         {/* ── 맵 영역 ── */}
         <section className="map-section">
           {error && <div className="error-banner">{error}</div>}
-          <div style={{ position: "relative", display: "inline-block" }}>
-            <MapCanvas onZoneChange={handleZoneChange} heatPoints={points} zone={zone} />
-            <HeatmapOverlay points={points} zone={zone} />
-            <ClusterMarkers clusters={clusters} />
-            {(loading || zoneLoading) && (
-              <div className="map-loading">
-                {loading ? "포지션 데이터 로딩 중..." : "추천 포지션 분석 중..."}
+
+          {/* 줌/오버플로 컨테이너 */}
+          <div
+            ref={mapContainerRef}
+            className="map-outer"
+          >
+            {/* 트랜스폼 레이어 */}
+            <div
+              style={{
+                position: "absolute",
+                width: MAP_SIZE,
+                height: MAP_SIZE,
+                transformOrigin: "0 0",
+                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              }}
+            >
+              <MapCanvas
+                onZoneChange={handleZoneChange}
+                heatPoints={points}
+                zone={zone}
+                phase={phase}
+                zoom={zoom}
+                onPanDelta={handlePanDelta}
+              />
+              <HeatmapOverlay points={points} zone={zone} />
+              <ClusterMarkers clusters={clusters} />
+              {(loading || zoneLoading) && (
+                <div className="map-loading">
+                  {loading ? "포지션 데이터 로딩 중..." : "추천 포지션 분석 중..."}
+                </div>
+              )}
+            </div>
+
+            {/* 줌 표시 (zoom > 1일 때) */}
+            {zoom > 1 && (
+              <div className="zoom-badge" onDoubleClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}>
+                {Math.round(zoom * 100)}% · 더블클릭 초기화
               </div>
             )}
           </div>
@@ -110,7 +194,7 @@ function App() {
             </span>
             <span className="legend-arrow">→</span>
             <span className="legend-item">
-              <span className="legend-dot" style={{ background: "#00ff00" }} />보통
+              <span className="legend-dot" style={{ background: "#ff8800" }} />보통
             </span>
             <span className="legend-arrow">→</span>
             <span className="legend-item">
@@ -127,7 +211,6 @@ function App() {
         <aside className="control-panel">
           <PhaseSelector phase={phase} onChange={handlePhaseChange} />
 
-          {/* 초기화 버튼 */}
           {zone && (
             <button className="reset-btn" onClick={handleReset}>
               자기장 초기화
@@ -194,9 +277,10 @@ function App() {
             <h3>사용 방법</h3>
             <ol>
               <li>자기장 페이즈를 선택하세요</li>
-              <li>맵에서 <b>클릭 + 드래그</b>로 현재 자기장 범위를 그리세요</li>
+              <li>맵 <b>클릭</b> → 페이즈 크기 자기장 자동 배치</li>
+              <li><b>드래그</b> → 자기장 범위 직접 지정</li>
+              <li><b>휠</b> 확대 · <b>Ctrl+드래그</b> 이동</li>
               <li>번호 마커 <b>①②③</b>이 추천 포지션이에요</li>
-              <li>히트맵이 빨갈수록 고수들이 자주 간 위치예요</li>
             </ol>
           </div>
         </aside>

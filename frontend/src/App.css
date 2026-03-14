@@ -236,6 +236,75 @@
   pointer-events: none;
 }
 
+/* 클러스터 목록 */
+.cluster-box {
+  background: #161b22;
+  border: 1px solid #21262d;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.cluster-box h3 {
+  margin: 0 0 12px;
+  font-size: 0.85rem;
+  color: #8b949e;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.cluster-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid #21262d;
+}
+
+.cluster-row:last-of-type {
+  border-bottom: none;
+}
+
+.cluster-rank {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #000;
+  flex-shrink: 0;
+}
+
+.cluster-info {
+  flex: 1;
+  font-size: 0.88rem;
+  color: #c9d1d9;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.cluster-info small {
+  font-size: 0.75rem;
+  color: #8b949e;
+}
+
+.cluster-percent {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #ffd700;
+  flex-shrink: 0;
+}
+
+.cluster-note {
+  margin: 10px 0 0;
+  font-size: 0.75rem;
+  color: #6e7681;
+  line-height: 1.5;
+}
+
 /* 데이터 안내 */
 .data-notice {
   font-size: 0.75rem;

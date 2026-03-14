@@ -38,6 +38,9 @@
 /* ── 맵 영역 ──────────────────────────────────────── */
 .map-section {
   flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .map-wrapper {
@@ -209,6 +212,78 @@
   font-size: 0.85rem;
   color: #c9d1d9;
   line-height: 1.5;
+}
+
+/* 색상 범례 */
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #161b22;
+  border: 1px solid #21262d;
+  border-radius: 6px;
+  font-size: 0.78rem;
+  color: #8b949e;
+  flex-wrap: wrap;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.legend-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.legend-arrow {
+  color: #30363d;
+}
+
+.legend-sep {
+  width: 1px;
+  height: 14px;
+  background: #30363d;
+  margin: 0 4px;
+}
+
+/* 초기화 버튼 */
+.reset-btn {
+  width: 100%;
+  padding: 9px;
+  background: transparent;
+  border: 1px solid #f85149;
+  border-radius: 6px;
+  color: #f85149;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.reset-btn:hover {
+  background: rgba(248, 81, 73, 0.12);
+}
+
+/* 통계 빈 상태 */
+.stats-empty {
+  margin: 8px 0 0;
+  font-size: 0.8rem;
+  color: #6e7681;
+  line-height: 1.6;
+}
+
+/* 클러스터 빈 상태 */
+.cluster-empty {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #8b949e;
+  line-height: 1.6;
 }
 
 /* 에러 배너 */

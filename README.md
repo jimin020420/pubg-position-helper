@@ -99,8 +99,8 @@ python collect_telemetry.py
 ## 개발 로드맵
 
 - [x] Step 1: 프로젝트 폴더 구조
-- [ ] Step 2: 에란겔 맵 + 히트맵 프론트엔드
-- [ ] Step 3: FastAPI 백엔드 + SQLite 연동
-- [ ] Step 4: PUBG API Telemetry 수집 스크립트
-- [ ] Step 5: 클러스터링 + 퍼센트 계산
-- [ ] Step 6: 자기장 원 지정 → 추천 포지션 표시
+- [x] Step 2: 에란겔 맵 + 히트맵 프론트엔드
+- [x] Step 3: FastAPI 백엔드 + SQLite 연동
+- [x] Step 4: PUBG API Telemetry 수집 스크립트
+- [x] Step 5: 클러스터링 + 퍼센트 계산
+- [x] Step 6: 자기장 원 지정 → 추천 포지션 표시 (완성)

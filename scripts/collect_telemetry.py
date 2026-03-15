@@ -174,8 +174,12 @@ def download_telemetry(client: httpx.Client, url: str) -> list:
 
     content = resp.content
     try:
-        if url.endswith(".gz") or resp.headers.get("Content-Encoding") == "gzip":
+        # gzip 압축인지 먼저 시도, 실패하면 원본 그대로 파싱
+        # gzip 압축 시도 — 실패하면 원본(plain JSON) 그대로 사용
+        try:
             content = gzip.decompress(content)
+        except Exception:
+            pass
         return json.loads(content)
     except Exception as e:
         log.warning(f"Telemetry 파싱 실패: {e}")
@@ -342,26 +346,35 @@ def save_positions(db, positions: list, match_id: str, dry_run: bool = False) ->
 
 def main(players=None, matches=None, dry_run=None):
     parser = argparse.ArgumentParser(description="PUBG Telemetry 수집 스크립트")
-    parser.add_argument("--players",  type=int, default=50,      help="리더보드에서 수집할 상위 랭커 수 (기본: 50)")
-    parser.add_argument("--matches",  type=int, default=5,       help="플레이어당 매치 수 (기본: 5)")
-    parser.add_argument("--dry-run",  action="store_true",       help="DB 저장 없이 테스트만 실행")
-    parser.add_argument("--schedule", action="store_true",       help="하루 1회 자동 반복 실행")
-    parser.add_argument("--time",     type=str, default="03:00", help="스케줄 실행 시각 (HH:MM, 기본: 03:00)")
+    parser.add_argument("--matches",   type=int, default=5,       help="플레이어당 수집할 매치 수 (기본: 5)")
+    parser.add_argument("--dry-run",   action="store_true",       help="DB 저장 없이 테스트만 실행")
+    parser.add_argument("--reset-db",  action="store_true",       help="position_records 테이블 초기화 후 종료")
+    parser.add_argument("--schedule",  action="store_true",       help="하루 1회 자동 반복 실행")
+    parser.add_argument("--time",      type=str, default="03:00", help="스케줄 실행 시각 (HH:MM, 기본: 03:00)")
     parser.add_argument(
         "--names", type=str, default="",
-        help="수집할 플레이어 닉네임 (쉼표 구분). 예: --names PlayerA,PlayerB,PlayerC\n"
-             "지정하면 리더보드 API를 건너뛰고 해당 플레이어의 매치만 수집합니다.",
+        help="수집할 플레이어 닉네임 (쉼표 구분, 필수). 예: --names PlayerA,PlayerB,PlayerC",
     )
     args = parser.parse_args()
 
-    if players  is not None: args.players  = players
     if matches  is not None: args.matches  = matches
     if dry_run  is not None: args.dry_run  = dry_run
+
+    # ── DB 초기화 모드 ────────────────────────────────────────────────────────
+    if args.reset_db:
+        Base.metadata.drop_all(bind=engine)
+        Base.metadata.create_all(bind=engine)
+        log.info("DB 초기화 완료. position_records 테이블이 비워졌습니다.")
+        sys.exit(0)
 
     if not PUBG_API_KEY:
         print("\n오류: PUBG_API_KEY가 설정되지 않았습니다.")
         print("backend/.env 파일에 다음을 추가하세요:")
         print("  PUBG_API_KEY=your_api_key_here\n")
+        sys.exit(1)
+
+    if not args.names:
+        log.error("--names 옵션이 필요합니다. 예: --names PlayerA,PlayerB,PlayerC")
         sys.exit(1)
 
     log.info("=" * 55)
@@ -374,21 +387,14 @@ def main(players=None, matches=None, dry_run=None):
 
     try:
         with httpx.Client() as client:
-            # ── 매치 ID 목록 수집 (3가지 방법 중 선택) ──────────────────
+            # ── 플레이어 닉네임으로 매치 ID 수집 ────────────────────────
             all_match_ids: list = []
 
-            if args.names:
-                # 방법 A: 플레이어 닉네임 직접 지정
-                names = [n.strip() for n in args.names.split(",") if n.strip()]
-                log.info(f"  플레이어 지정 모드: {', '.join(names)}")
-                player_matches = get_player_match_ids(client, names)
-                for match_ids in player_matches.values():
-                    all_match_ids.extend(match_ids[:args.matches])
-            else:
-                # 방법 B: /samples API (기본값) — 플레이어 이름 불필요
-                log.info("  샘플 매치 모드: 최근 매치 목록 자동 조회")
-                all_match_ids = get_sample_match_ids(client, limit=args.matches * 10)
-                time.sleep(REQUEST_INTERVAL)
+            names = [n.strip() for n in args.names.split(",") if n.strip()]
+            log.info(f"  플레이어 지정 모드: {', '.join(names)}")
+            player_matches = get_player_match_ids(client, names)
+            for match_ids in player_matches.values():
+                all_match_ids.extend(match_ids[:args.matches])
 
             all_match_ids = list(dict.fromkeys(all_match_ids))  # 중복 제거
             log.info(f"  처리할 매치: {len(all_match_ids)}개")

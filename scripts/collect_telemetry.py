@@ -334,12 +334,19 @@ def save_positions(db, positions: list[dict], match_id: str, dry_run: bool = Fal
 
 # ── 메인 ──────────────────────────────────────────────────────────────────────
 
-def main():
+def main(players=None, matches=None, dry_run=None):
     parser = argparse.ArgumentParser(description="PUBG Telemetry 수집 스크립트")
-    parser.add_argument("--players", type=int, default=50, help="수집할 상위 랭커 수 (기본: 50)")
-    parser.add_argument("--matches", type=int, default=5,  help="플레이어당 매치 수 (기본: 5)")
-    parser.add_argument("--dry-run", action="store_true",  help="DB 저장 없이 테스트만 실행")
+    parser.add_argument("--players",  type=int, default=50,    help="수집할 상위 랭커 수 (기본: 50)")
+    parser.add_argument("--matches",  type=int, default=5,     help="플레이어당 매치 수 (기본: 5)")
+    parser.add_argument("--dry-run",  action="store_true",     help="DB 저장 없이 테스트만 실행")
+    parser.add_argument("--schedule", action="store_true",     help="하루 1회 자동 반복 실행")
+    parser.add_argument("--time",     type=str, default="03:00", help="스케줄 실행 시각 (HH:MM, 기본: 03:00)")
     args = parser.parse_args()
+
+    # 프로그래매틱 호출 시 인자 덮어쓰기
+    if players  is not None: args.players  = players
+    if matches  is not None: args.matches  = matches
+    if dry_run  is not None: args.dry_run  = dry_run
 
     if not PUBG_API_KEY:
         print("\n오류: PUBG_API_KEY가 설정되지 않았습니다.")
@@ -430,4 +437,31 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # --schedule 없으면 한 번만 실행
+    import sys as _sys
+    if "--schedule" in _sys.argv:
+        import schedule as _schedule
+        # argparse 먼저 실행해서 --time 값 파싱
+        _parser = argparse.ArgumentParser(add_help=False)
+        _parser.add_argument("--players",  type=int,  default=50)
+        _parser.add_argument("--matches",  type=int,  default=5)
+        _parser.add_argument("--dry-run",  action="store_true")
+        _parser.add_argument("--time",     type=str,  default="03:00")
+        _args, _ = _parser.parse_known_args()
+
+        def _job():
+            log.info(f"[스케줄러] 자동 수집 시작")
+            main(players=_args.players, matches=_args.matches,
+                 dry_run=_args.dry_run)
+
+        _schedule.every().day.at(_args.time).do(_job)
+        log.info(f"[스케줄러] 매일 {_args.time} 자동 수집 대기 중... (종료: Ctrl+C)")
+        log.info(f"  설정: 상위 {_args.players}명 × {_args.matches}매치")
+
+        # 시작 즉시 1회 실행 후 매일 반복
+        _job()
+        while True:
+            _schedule.run_pending()
+            time.sleep(30)
+    else:
+        main()

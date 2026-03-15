@@ -111,6 +111,19 @@ def get_top_players(client: httpx.Client, season_id: str, top_n: int) -> list:
     return names
 
 
+def get_sample_match_ids(client: httpx.Client, limit: int = 50) -> list:
+    """
+    /samples 엔드포인트로 최근 매치 ID 목록을 바로 가져옴.
+    플레이어 이름 없이도 최신 매치를 수집할 수 있는 가장 간단한 방법.
+    반환: [match_id, ...]
+    """
+    data = api_get(client, f"{BASE_URL}/samples")
+    matches = data.get("data", {}).get("relationships", {}).get("matches", {}).get("data", [])
+    ids = [m["id"] for m in matches[:limit]]
+    log.info(f"샘플 매치 {len(ids)}개 조회 완료")
+    return ids
+
+
 def get_player_match_ids(client: httpx.Client, player_names: list) -> dict:
     """플레이어 이름 목록으로 최근 매치 ID 조회."""
     result = {}
@@ -329,11 +342,16 @@ def save_positions(db, positions: list, match_id: str, dry_run: bool = False) ->
 
 def main(players=None, matches=None, dry_run=None):
     parser = argparse.ArgumentParser(description="PUBG Telemetry 수집 스크립트")
-    parser.add_argument("--players",  type=int, default=50,      help="수집할 상위 랭커 수 (기본: 50)")
+    parser.add_argument("--players",  type=int, default=50,      help="리더보드에서 수집할 상위 랭커 수 (기본: 50)")
     parser.add_argument("--matches",  type=int, default=5,       help="플레이어당 매치 수 (기본: 5)")
     parser.add_argument("--dry-run",  action="store_true",       help="DB 저장 없이 테스트만 실행")
     parser.add_argument("--schedule", action="store_true",       help="하루 1회 자동 반복 실행")
     parser.add_argument("--time",     type=str, default="03:00", help="스케줄 실행 시각 (HH:MM, 기본: 03:00)")
+    parser.add_argument(
+        "--names", type=str, default="",
+        help="수집할 플레이어 닉네임 (쉼표 구분). 예: --names PlayerA,PlayerB,PlayerC\n"
+             "지정하면 리더보드 API를 건너뛰고 해당 플레이어의 매치만 수집합니다.",
+    )
     args = parser.parse_args()
 
     if players  is not None: args.players  = players
@@ -348,7 +366,6 @@ def main(players=None, matches=None, dry_run=None):
 
     log.info("=" * 55)
     log.info("PUBG Telemetry 수집 시작")
-    log.info(f"  대상: 상위 {args.players}명 × 매치 {args.matches}개")
     log.info(f"  dry-run: {args.dry_run}")
     log.info("=" * 55)
 
@@ -357,57 +374,61 @@ def main(players=None, matches=None, dry_run=None):
 
     try:
         with httpx.Client() as client:
-            season_id = get_current_season(client)
-            if not season_id:
-                log.error("시즌 정보를 가져올 수 없습니다.")
-                return
+            # ── 매치 ID 목록 수집 (3가지 방법 중 선택) ──────────────────
+            all_match_ids: list = []
 
-            top_players = get_top_players(client, season_id, args.players)
-            if not top_players:
-                log.error("상위 랭커 목록을 가져올 수 없습니다.")
-                return
+            if args.names:
+                # 방법 A: 플레이어 닉네임 직접 지정
+                names = [n.strip() for n in args.names.split(",") if n.strip()]
+                log.info(f"  플레이어 지정 모드: {', '.join(names)}")
+                player_matches = get_player_match_ids(client, names)
+                for match_ids in player_matches.values():
+                    all_match_ids.extend(match_ids[:args.matches])
+            else:
+                # 방법 B: /samples API (기본값) — 플레이어 이름 불필요
+                log.info("  샘플 매치 모드: 최근 매치 목록 자동 조회")
+                all_match_ids = get_sample_match_ids(client, limit=args.matches * 10)
+                time.sleep(REQUEST_INTERVAL)
 
-            player_matches = get_player_match_ids(client, top_players)
+            all_match_ids = list(dict.fromkeys(all_match_ids))  # 중복 제거
+            log.info(f"  처리할 매치: {len(all_match_ids)}개")
 
             total_saved = 0
             processed_matches = set()
 
-            for player_name, match_ids in player_matches.items():
-                log.info(f"\n플레이어: {player_name} ({len(match_ids)}개 매치)")
+            for match_id in all_match_ids:
+                if match_id in processed_matches:
+                    continue
+                processed_matches.add(match_id)
 
-                for match_id in match_ids[:args.matches]:
-                    if match_id in processed_matches:
-                        continue
-                    processed_matches.add(match_id)
+                log.info(f"  매치: {match_id[:20]}...")
 
-                    log.info(f"  매치: {match_id[:20]}...")
+                telemetry_url, map_name = get_telemetry_url(client, match_id)
+                time.sleep(REQUEST_INTERVAL)
 
-                    telemetry_url, map_name = get_telemetry_url(client, match_id)
-                    time.sleep(REQUEST_INTERVAL)
+                if not telemetry_url:
+                    log.warning("  Telemetry URL 없음, 건너뜀")
+                    continue
 
-                    if not telemetry_url:
-                        log.warning("  Telemetry URL 없음, 건너뜀")
-                        continue
+                if map_name not in ERANGEL_MAP_NAMES:
+                    log.info(f"  에란겔이 아닌 맵({map_name}), 건너뜀")
+                    continue
 
-                    if map_name not in ERANGEL_MAP_NAMES:
-                        log.info(f"  에란겔이 아닌 맵({map_name}), 건너뜀")
-                        continue
+                log.info("  Telemetry 다운로드 중...")
+                events = download_telemetry(client, telemetry_url)
+                if not events:
+                    continue
+                log.info(f"  이벤트 {len(events):,}개 로드")
 
-                    log.info("  Telemetry 다운로드 중...")
-                    events = download_telemetry(client, telemetry_url)
-                    if not events:
-                        continue
-                    log.info(f"  이벤트 {len(events):,}개 로드")
+                phase_boundaries = detect_phase_boundaries(events)
+                log.info(f"  페이즈 경계: {len(phase_boundaries)}개 감지")
 
-                    phase_boundaries = detect_phase_boundaries(events)
-                    log.info(f"  페이즈 경계: {len(phase_boundaries)}개 감지")
+                positions = extract_positions_by_phase(events, phase_boundaries)
+                log.info(f"  추출된 포지션: {len(positions)}개")
 
-                    positions = extract_positions_by_phase(events, phase_boundaries)
-                    log.info(f"  추출된 포지션: {len(positions)}개")
-
-                    saved = save_positions(db, positions, match_id, dry_run=args.dry_run)
-                    total_saved += saved
-                    log.info(f"  저장: {saved}개")
+                saved = save_positions(db, positions, match_id, dry_run=args.dry_run)
+                total_saved += saved
+                log.info(f"  저장: {saved}개")
 
         log.info("\n" + "=" * 55)
         log.info(f"수집 완료! 총 {total_saved}개 포지션 저장됨")

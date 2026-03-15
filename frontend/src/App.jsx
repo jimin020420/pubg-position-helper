@@ -99,13 +99,14 @@ function App() {
     const qs = `cx=${cx}&cy=${cy}&radius=${radius}`;
     setZoneLoading(true);
     try {
-      const [zoneRes, clusterRes] = await Promise.all([
-        fetch(`${base}/zone?${qs}`),
-        fetch(`${base}/clusters?${qs}&top_n=5`),
+      const [searchRes, clusterRes] = await Promise.all([
+        fetch(`${base}/search?${qs}`),          // 비슷한 자기장 매치 검색
+        fetch(`${base}/clusters?${qs}&top_n=5`), // 추천 포지션 클러스터
       ]);
-      if (zoneRes.ok) {
-        const d = await zoneRes.json();
-        setStats({ inside: d.inside, percent: d.percent, total: d.total });
+      if (searchRes.ok) {
+        const d = await searchRes.json();
+        setPoints(d.points);  // 히트맵을 비슷한 자기장 매치의 포지션으로 교체
+        setStats({ matchedMatches: d.matched_matches, total: d.total_points });
       }
       if (clusterRes.ok) {
         const d = await clusterRes.json();
@@ -133,6 +134,7 @@ function App() {
     setZone(null);
     setStats(null);
     setClusters([]);
+    fetchPositions(phase); // 히트맵을 페이즈 전체 데이터로 복원
   };
 
   return (
@@ -227,12 +229,12 @@ function App() {
             {stats && (
               <>
                 <div className="stat-row highlight">
-                  <span>자기장 안 포지션</span>
-                  <strong>{stats.inside}개</strong>
+                  <span>유사 자기장 매치</span>
+                  <strong>{stats.matchedMatches}개</strong>
                 </div>
                 <div className="stat-row highlight">
-                  <span>자기장 커버율</span>
-                  <strong>{stats.percent}%</strong>
+                  <span>포지션 데이터</span>
+                  <strong>{stats.total}개</strong>
                 </div>
               </>
             )}
@@ -277,9 +279,9 @@ function App() {
             <h3>사용 방법</h3>
             <ol>
               <li>자기장 페이즈를 선택하세요</li>
-              <li>맵 <b>클릭</b> → 페이즈 크기 자기장 자동 배치</li>
+              <li>맵 <b>클릭</b> → 현재 자기장 위치 지정</li>
               <li><b>드래그</b> → 자기장 범위 직접 지정</li>
-              <li><b>휠</b> 확대 · <b>Ctrl+드래그</b> 이동</li>
+              <li>히트맵이 <b>비슷한 자기장</b>이었던 과거 매치의 포지션으로 업데이트됩니다</li>
               <li>번호 마커 <b>①②③</b>이 추천 포지션이에요</li>
             </ol>
           </div>

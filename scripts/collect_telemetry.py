@@ -39,7 +39,8 @@ BACKEND_DIR = os.path.join(os.path.dirname(__file__), "..", "backend")
 sys.path.insert(0, os.path.abspath(BACKEND_DIR))
 
 from database import SessionLocal, engine, Base
-from models import PositionRecord
+import models  # noqa: F401 — Base.metadata에 4개 테이블 등록용
+from models import Match, Bluezone, Position, Combat
 
 # ── 설정 ─────────────────────────────────────────────────────────────────────
 load_dotenv(os.path.join(BACKEND_DIR, ".env"))
@@ -364,7 +365,7 @@ def main(players=None, matches=None, dry_run=None):
     if args.reset_db:
         Base.metadata.drop_all(bind=engine)
         Base.metadata.create_all(bind=engine)
-        log.info("DB 초기화 완료. position_records 테이블이 비워졌습니다.")
+        log.info("DB 초기화 완료. matches / bluezones / positions / combats 테이블이 생성되었습니다.")
         sys.exit(0)
 
     if not PUBG_API_KEY:

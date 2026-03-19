@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import engine, Base
+import models  # noqa: F401 — Base.metadata에 4개 테이블 등록
 from routers import positions, pubg_api
 
 # DB 테이블 자동 생성

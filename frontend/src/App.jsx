@@ -160,6 +160,7 @@ export default function App() {
             style={{ width: 700, height: 700 }}
             zoomSnap={0}
             zoomDelta={0.5}
+            dragging={false}
             attributionControl={false}
           >
             <ImageOverlay url="/maps/erangel.png" bounds={MAP_BOUNDS} />

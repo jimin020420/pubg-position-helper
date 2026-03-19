@@ -227,7 +227,7 @@ def extract_bluezones_by_phase(events: list, phase_boundaries: list) -> dict:
             pos = gs.get("safetyZonePosition", {})
             result[phase] = {
                 "center_x": pos.get("x", 0),
-                "center_y": pos.get("z", 0),  # PUBG 텔레메트리는 z축이 맵의 Y
+                "center_y": pos.get("y", 0),  # safetyZonePosition은 x/y 필드 사용
                 "radius":   radius,
             }
 

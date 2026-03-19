@@ -83,9 +83,8 @@ def get_score(
 
     similar_match_ids: set[str] = set()
     for bz in all_bz:
-        dist   = math.hypot(bz.center_x - cx, bz.center_y - cy)
-        r_diff = abs(bz.radius - radius) / radius
-        if dist <= config.POS_TOLERANCE and r_diff <= config.RADIUS_TOLERANCE:
+        dist = math.hypot(bz.center_x - cx, bz.center_y - cy)
+        if dist <= config.POS_TOLERANCE:  # 반지름은 페이즈로 이미 결정됨
             similar_match_ids.add(bz.match_id)
 
     if not similar_match_ids:

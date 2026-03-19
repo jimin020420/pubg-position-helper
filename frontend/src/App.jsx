@@ -5,11 +5,11 @@ import PhaseSelector from "./components/PhaseSelector";
 import "./App.css";
 
 // ── 상수 ─────────────────────────────────────────────────────────────────────
-const GAME_SIZE = 816000;   // cm
-const MAP_M     = 8160;     // 미터 단위 (Leaflet 좌표계)
+const MAP_M     = 8160;     // 미터 단위 (Leaflet 좌표계, 816000cm)
 const CELL_M    = 50;       // 격자 한 변 (미터)
 const HALF_CELL = CELL_M / 2;
-const MAP_BOUNDS = [[0, 0], [MAP_M, MAP_M]];
+const MAP_BOUNDS  = [[0, 0], [MAP_M, MAP_M]];
+const INIT_ZOOM   = Math.log2(700 / MAP_M);   // 700px 컨테이너에 맵이 꽉 차는 줌 (≈ -3.54)
 const API = "http://127.0.0.1:8000";
 
 // 에란겔 페이즈별 자기장 반지름 (게임 cm)
@@ -153,10 +153,11 @@ export default function App() {
 
           <MapContainer
             crs={L.CRS.Simple}
-            bounds={MAP_BOUNDS}
-            style={{ width: 700, height: 700 }}
-            minZoom={-5}
+            center={[MAP_M / 2, MAP_M / 2]}
+            zoom={INIT_ZOOM}
+            minZoom={INIT_ZOOM}
             maxZoom={5}
+            style={{ width: 700, height: 700 }}
             zoomSnap={0}
             zoomDelta={0.5}
             attributionControl={false}

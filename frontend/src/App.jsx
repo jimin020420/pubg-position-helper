@@ -155,8 +155,10 @@ export default function App() {
             crs={L.CRS.Simple}
             bounds={MAP_BOUNDS}
             style={{ width: 700, height: 700 }}
-            minZoom={-2}
+            minZoom={-5}
             maxZoom={5}
+            zoomSnap={0}
+            zoomDelta={0.5}
             attributionControl={false}
           >
             <ImageOverlay url="/maps/erangel.png" bounds={MAP_BOUNDS} />

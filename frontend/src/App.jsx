@@ -161,6 +161,8 @@ export default function App() {
             zoomSnap={0}
             zoomDelta={0.5}
             dragging={false}
+            maxBounds={MAP_BOUNDS}
+            maxBoundsViscosity={1.0}
             attributionControl={false}
           >
             <ImageOverlay url="/maps/erangel.png" bounds={MAP_BOUNDS} />

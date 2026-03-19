@@ -1,215 +1,182 @@
-import { useState, useEffect, useCallback, useRef } from "react";
-import MapCanvas from "./components/MapCanvas";
+import { useState, useCallback } from "react";
+import { MapContainer, ImageOverlay, Circle, Rectangle, useMapEvents } from "react-leaflet";
+import L from "leaflet";
 import PhaseSelector from "./components/PhaseSelector";
-import HeatmapOverlay from "./components/HeatmapOverlay";
-import ClusterMarkers from "./components/ClusterMarkers";
 import "./App.css";
 
-const RANK_COLORS = ["#ff4444", "#ff9900", "#ffdd00", "#44ff88", "#44ccff"];
+// ── 상수 ─────────────────────────────────────────────────────────────────────
+const GAME_SIZE = 816000;   // cm
+const MAP_M     = 8160;     // 미터 단위 (Leaflet 좌표계)
+const CELL_M    = 50;       // 격자 한 변 (미터)
+const HALF_CELL = CELL_M / 2;
+const MAP_BOUNDS = [[0, 0], [MAP_M, MAP_M]];
 const API = "http://127.0.0.1:8000";
-const MAP_SIZE = 700;
 
-function App() {
-  const [phase, setPhase] = useState(1);
-  const [zone, setZone] = useState(null);
-  const [points, setPoints] = useState([]);
-  const [stats, setStats] = useState(null);
-  const [clusters, setClusters] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [zoneLoading, setZoneLoading] = useState(false);
-  const [error, setError] = useState(null);
+// 에란겔 페이즈별 자기장 반지름 (게임 cm)
+const PHASE_RADII = {
+  1: 228235, 2: 148355, 3: 74175, 4: 37090,
+  5: 18545,  6: 9270,   7: 4635,  8: 2320,
+};
 
-  // 줌/패닝 상태
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const mapContainerRef = useRef(null);
-  const zoomRef = useRef(zoom);
-  const panRef = useRef(pan);
-  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
-  useEffect(() => { panRef.current = pan; }, [pan]);
+// ── 좌표 변환 ─────────────────────────────────────────────────────────────────
+// 게임 cm → Leaflet [lat, lng] (Y축 반전: 게임 Y=0 = 맵 상단 = Leaflet lat 최대값)
+const g2l = (x, y) => [MAP_M - y / 100, x / 100];
 
-  const clampPan = (x, y, z) => ({
-    x: Math.min(0, Math.max(MAP_SIZE * (1 - z), x)),
-    y: Math.min(0, Math.max(MAP_SIZE * (1 - z), y)),
+// Leaflet lat, lng → 게임 cm
+const l2g = (lat, lng) => ({ x: lng * 100, y: (MAP_M - lat) * 100 });
+
+// 격자 중심(게임 cm) → Leaflet Rectangle bounds
+const cellBounds = (cx, cy) => {
+  const lat = MAP_M - cy / 100;
+  const lng = cx / 100;
+  return [[lat - HALF_CELL, lng - HALF_CELL], [lat + HALF_CELL, lng + HALF_CELL]];
+};
+
+// 점수(0~1) → rgba 색상
+const scoreColor = (score, lowConf) => {
+  if (lowConf) return "rgba(150,150,150,0.25)";
+  const r = Math.min(255, Math.round(score * 2 * 255));
+  const g = Math.min(255, Math.round((1 - Math.abs(score - 0.5) * 2) * 180));
+  const b = Math.round((1 - score) * 220);
+  return `rgba(${r},${g},${b},0.65)`;
+};
+
+// ── 맵 이벤트 핸들러 (MapContainer 내부에 있어야 함) ──────────────────────────
+function MapEvents({ phase, onZonePlace, zone, cells, onCellClick }) {
+  useMapEvents({
+    click(e) {
+      // 격자 클릭은 Rectangle eventHandlers에서 처리하므로 여기선 맵 클릭만
+      const game = l2g(e.latlng.lat, e.latlng.lng);
+      onZonePlace({
+        cx: game.x,
+        cy: game.y,
+        radius: PHASE_RADII[phase] ?? PHASE_RADII[1],
+      });
+    },
   });
 
-  // 마우스 휠 줌 (passive: false 필요)
-  useEffect(() => {
-    const el = mapContainerRef.current;
-    if (!el) return;
-    const handler = (e) => {
-      e.preventDefault();
-      const currentZoom = zoomRef.current;
-      const currentPan = panRef.current;
-      const rect = el.getBoundingClientRect();
-      const mouseX = e.clientX - rect.left;
-      const mouseY = e.clientY - rect.top;
+  return (
+    <>
+      {/* 자기장 원 */}
+      {zone && (
+        <Circle
+          center={g2l(zone.cx, zone.cy)}
+          radius={zone.radius / 100}   // cm → 미터
+          pathOptions={{
+            color: "#00e5ff",
+            fill: false,
+            weight: 2.5,
+            dashArray: "8 4",
+          }}
+        />
+      )}
 
-      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-      const newZoom = Math.min(4, Math.max(1, currentZoom * factor));
+      {/* 격자 히트맵 */}
+      {cells.map((cell) => (
+        <Rectangle
+          key={`${cell.cx}-${cell.cy}`}
+          bounds={cellBounds(cell.cx, cell.cy)}
+          pathOptions={{
+            color:        cell.rank <= 5 ? "#ffd700" : "transparent",
+            weight:       cell.rank <= 5 ? 2 : 0,
+            fillColor:    scoreColor(cell.score, cell.low_confidence),
+            fillOpacity:  cell.low_confidence ? 0.25 : 0.7,
+          }}
+          eventHandlers={{
+            click(e) {
+              L.DomEvent.stop(e);   // 맵 click 이벤트 전파 차단
+              onCellClick(cell);
+            },
+          }}
+        />
+      ))}
+    </>
+  );
+}
 
-      if (newZoom === 1) {
-        setZoom(1);
-        setPan({ x: 0, y: 0 });
-        return;
-      }
+// ── 메인 앱 ───────────────────────────────────────────────────────────────────
+export default function App() {
+  const [phase,        setPhase]        = useState(1);
+  const [zone,         setZone]         = useState(null);
+  const [cells,        setCells]        = useState([]);
+  const [stats,        setStats]        = useState(null);
+  const [selectedCell, setSelectedCell] = useState(null);
+  const [loading,      setLoading]      = useState(false);
+  const [error,        setError]        = useState(null);
 
-      const newPanX = mouseX - (mouseX - currentPan.x) * (newZoom / currentZoom);
-      const newPanY = mouseY - (mouseY - currentPan.y) * (newZoom / currentZoom);
-      const clamped = clampPan(newPanX, newPanY, newZoom);
-      setZoom(newZoom);
-      setPan(clamped);
-    };
-    el.addEventListener("wheel", handler, { passive: false });
-    return () => el.removeEventListener("wheel", handler);
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Ctrl+드래그 패닝 콜백 (MapCanvas에서 호출)
-  const handlePanDelta = useCallback(({ dx, dy }) => {
-    setZoom(z => {
-      setPan(p => clampPan(p.x + dx, p.y + dy, z));
-      return z;
-    });
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const fetchPositions = useCallback(async (p) => {
+  const fetchScore = useCallback(async (z, p) => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API}/positions/Erangel/${p}`);
-      if (!res.ok) throw new Error(`서버 오류: ${res.status}`);
+      const res = await fetch(
+        `${API}/score?phase=${p}&cx=${z.cx}&cy=${z.cy}&radius=${z.radius}`
+      );
+      if (!res.ok) throw new Error(`서버 오류 ${res.status}`);
       const data = await res.json();
-      setPoints(data.points);
+      setCells(data.cells);
+      setStats({ matched: data.matched_matches, total: data.total_positions });
     } catch {
       setError("백엔드 서버에 연결할 수 없습니다. 서버가 실행 중인지 확인하세요.");
-      setPoints([]);
+      setCells([]);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    fetchPositions(phase);
-  }, [phase, fetchPositions]);
-
-  const fetchZoneData = useCallback(async (newZone, currentPhase) => {
-    if (!newZone) { setStats(null); setClusters([]); return; }
-    const { cx, cy, radius } = newZone;
-    const base = `${API}/positions/Erangel/${currentPhase}`;
-    const qs = `cx=${cx}&cy=${cy}&radius=${radius}`;
-    setZoneLoading(true);
-    try {
-      const [searchRes, clusterRes] = await Promise.all([
-        fetch(`${base}/search?${qs}`),          // 비슷한 자기장 매치 검색
-        fetch(`${base}/clusters?${qs}&top_n=5`), // 추천 포지션 클러스터
-      ]);
-      if (searchRes.ok) {
-        const d = await searchRes.json();
-        setPoints(d.points);  // 히트맵을 비슷한 자기장 매치의 포지션으로 교체
-        setStats({ matchedMatches: d.matched_matches, total: d.total_points });
-      }
-      if (clusterRes.ok) {
-        const d = await clusterRes.json();
-        setClusters(d.clusters);
-      }
-    } catch {
-      setStats(null);
-      setClusters([]);
-    } finally {
-      setZoneLoading(false);
-    }
-  }, []);
-
-  const handleZoneChange = (newZone) => {
-    setZone(newZone);
-    fetchZoneData(newZone, phase);
-  };
-
-  const handlePhaseChange = (newPhase) => {
-    setPhase(newPhase);
-    handleReset();
-  };
+  const handleZonePlace = useCallback(
+    (z) => { setZone(z); setSelectedCell(null); fetchScore(z, phase); },
+    [phase, fetchScore]
+  );
 
   const handleReset = () => {
-    setZone(null);
-    setStats(null);
-    setClusters([]);
-    fetchPositions(phase); // 히트맵을 페이즈 전체 데이터로 복원
+    setZone(null); setCells([]); setStats(null); setSelectedCell(null);
   };
+
+  const handlePhaseChange = (p) => {
+    setPhase(p); handleReset();
+  };
+
+  const pct = (v) => `${(v * 100).toFixed(1)}%`;
 
   return (
     <div className="app">
       <header className="app-header">
-        <h1 className="app-title">PUBG 포지션 추천</h1>
-        <p className="app-subtitle">에란겔 · 자기장 페이즈별 고수 포지션 히트맵</p>
+        <h1>PUBG 포지션 추천</h1>
+        <p>에란겔 · 자기장 기반 포지션 점수 히트맵</p>
       </header>
 
       <main className="app-main">
-        {/* ── 맵 영역 ── */}
+        {/* ── 맵 ── */}
         <section className="map-section">
-          {error && <div className="error-banner">{error}</div>}
+          {error   && <div className="banner error-banner">{error}</div>}
+          {loading && <div className="banner loading-banner">분석 중...</div>}
 
-          {/* 줌/오버플로 컨테이너 */}
-          <div
-            ref={mapContainerRef}
-            className="map-outer"
+          <MapContainer
+            crs={L.CRS.Simple}
+            bounds={MAP_BOUNDS}
+            style={{ width: 700, height: 700 }}
+            minZoom={-2}
+            maxZoom={5}
+            attributionControl={false}
           >
-            {/* 트랜스폼 레이어 */}
-            <div
-              style={{
-                position: "absolute",
-                width: MAP_SIZE,
-                height: MAP_SIZE,
-                transformOrigin: "0 0",
-                transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-              }}
-            >
-              <MapCanvas
-                onZoneChange={handleZoneChange}
-                heatPoints={points}
-                zone={zone}
-                phase={phase}
-                zoom={zoom}
-                onPanDelta={handlePanDelta}
-              />
-              <HeatmapOverlay points={points} zone={zone} />
-              <ClusterMarkers clusters={clusters} />
-              {(loading || zoneLoading) && (
-                <div className="map-loading">
-                  {loading ? "포지션 데이터 로딩 중..." : "추천 포지션 분석 중..."}
-                </div>
-              )}
-            </div>
+            <ImageOverlay url="/maps/erangel.png" bounds={MAP_BOUNDS} />
+            <MapEvents
+              phase={phase}
+              onZonePlace={handleZonePlace}
+              zone={zone}
+              cells={cells}
+              onCellClick={setSelectedCell}
+            />
+          </MapContainer>
 
-            {/* 줌 표시 (zoom > 1일 때) */}
-            {zoom > 1 && (
-              <div className="zoom-badge" onDoubleClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}>
-                {Math.round(zoom * 100)}% · 더블클릭 초기화
-              </div>
-            )}
-          </div>
-
-          {/* 색상 범례 */}
-          <div className="legend">
-            <span className="legend-item">
-              <span className="legend-dot" style={{ background: "#0000ff" }} />낮음
-            </span>
-            <span className="legend-arrow">→</span>
-            <span className="legend-item">
-              <span className="legend-dot" style={{ background: "#ff8800" }} />보통
-            </span>
-            <span className="legend-arrow">→</span>
-            <span className="legend-item">
-              <span className="legend-dot" style={{ background: "#ff0000" }} />핫스팟
-            </span>
-            <span className="legend-sep" />
-            <span className="legend-item">
-              <span className="legend-dot" style={{ background: "#ffd700" }} />추천 포지션
-            </span>
-          </div>
+          <p className="map-hint">
+            {zone
+              ? "격자를 클릭하면 상세 점수를 볼 수 있어요 · 스크롤로 확대/축소"
+              : "맵을 클릭하면 현재 자기장 위치가 배치됩니다"}
+          </p>
         </section>
 
-        {/* ── 컨트롤 패널 ── */}
+        {/* ── 사이드 패널 ── */}
         <aside className="control-panel">
           <PhaseSelector phase={phase} onChange={handlePhaseChange} />
 
@@ -219,70 +186,101 @@ function App() {
             </button>
           )}
 
-          {/* 통계 */}
-          <div className="stats-box">
-            <h3>현재 데이터</h3>
-            <div className="stat-row">
-              <span>전체 포지션 수</span>
-              <strong>{points.length}개</strong>
+          {/* 클릭된 격자 상세 */}
+          {selectedCell && (
+            <div className="cell-detail">
+              <div className="cell-detail-header">
+                <span className="cell-rank-badge">#{selectedCell.rank}</span>
+                <span>격자 상세 정보</span>
+                <button className="close-btn" onClick={() => setSelectedCell(null)}>✕</button>
+              </div>
+              {selectedCell.low_confidence && (
+                <div className="low-conf-badge">
+                  ⚠ 데이터 부족 (샘플 {selectedCell.sample_count}개, 신뢰도 낮음)
+                </div>
+              )}
+              <div className="detail-score-row">
+                <span>종합 점수</span>
+                <strong className="detail-score">
+                  {(selectedCell.score * 100).toFixed(1)}점
+                </strong>
+              </div>
+              <div className="detail-grid">
+                {[
+                  ["① 사용률",     selectedCell.usage_rate],
+                  ["② 생존율",     selectedCell.survival_rate],
+                  ["③ 교전 생존율", selectedCell.combat_survival],
+                  ["④ 우승 기여율", selectedCell.win_rate],
+                  ["⑤ 이동 성공률", selectedCell.move_success],
+                ].map(([label, val]) => (
+                  <div key={label} className="detail-item">
+                    <span className="detail-label">{label}</span>
+                    <div className="detail-bar-wrap">
+                      <div
+                        className="detail-bar"
+                        style={{ width: pct(val) }}
+                      />
+                    </div>
+                    <span className="detail-val">{pct(val)}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="detail-sample">샘플 수: {selectedCell.sample_count}개</p>
             </div>
-            {stats && (
+          )}
+
+          {/* 통계 요약 */}
+          <div className="stats-box">
+            <h3>데이터 현황</h3>
+            {stats ? (
               <>
                 <div className="stat-row highlight">
                   <span>유사 자기장 매치</span>
-                  <strong>{stats.matchedMatches}개</strong>
+                  <strong>{stats.matched}개</strong>
                 </div>
                 <div className="stat-row highlight">
-                  <span>포지션 데이터</span>
+                  <span>분석된 포지션</span>
                   <strong>{stats.total}개</strong>
                 </div>
+                <div className="stat-row">
+                  <span>반환된 추천 격자</span>
+                  <strong>{cells.length}개</strong>
+                </div>
               </>
-            )}
-            {!zone && (
-              <p className="stats-empty">자기장을 지정하면<br />통계가 표시됩니다</p>
+            ) : (
+              <p className="stats-empty">
+                자기장을 클릭하면<br />포지션 점수가 표시됩니다
+              </p>
             )}
           </div>
 
-          {/* 추천 포지션 순위 */}
-          {clusters.length > 0 && (
-            <div className="cluster-box">
-              <h3>추천 포지션 순위</h3>
-              {clusters.map((c) => (
-                <div key={c.rank} className="cluster-row">
-                  <span
-                    className="cluster-rank"
-                    style={{ background: RANK_COLORS[(c.rank - 1) % RANK_COLORS.length] }}
-                  >
-                    {c.rank}
-                  </span>
-                  <span className="cluster-info">
-                    포지션 #{c.rank}
-                    <small>{c.count}명 사용</small>
-                  </span>
-                  <span className="cluster-percent">{c.percent}%</span>
-                </div>
-              ))}
-              <p className="cluster-note">맵의 번호 마커 위치가 추천 포지션이에요</p>
+          {/* 색상 범례 */}
+          <div className="legend-box">
+            <h3>점수 범례</h3>
+            <div className="legend-bar-row">
+              <span className="legend-label">낮음</span>
+              <div className="legend-gradient" />
+              <span className="legend-label">높음</span>
             </div>
-          )}
-
-          {zone && clusters.length === 0 && !zoneLoading && (
-            <div className="cluster-box">
-              <p className="cluster-empty">
-                범위 안에 데이터가 부족합니다.<br />더 넓게 드래그해 보세요.
-              </p>
+            <div className="legend-items">
+              <span>
+                <span className="legend-dot gold" />상위 5위 (금색 테두리)
+              </span>
+              <span>
+                <span className="legend-dot grey" />데이터 부족
+              </span>
             </div>
-          )}
+          </div>
 
           {/* 사용 방법 */}
           <div className="guide-box">
             <h3>사용 방법</h3>
             <ol>
-              <li>자기장 페이즈를 선택하세요</li>
-              <li>맵 <b>클릭</b> → 현재 자기장 위치 지정</li>
-              <li><b>드래그</b> → 자기장 범위 직접 지정</li>
-              <li>히트맵이 <b>비슷한 자기장</b>이었던 과거 매치의 포지션으로 업데이트됩니다</li>
-              <li>번호 마커 <b>①②③</b>이 추천 포지션이에요</li>
+              <li>페이즈를 선택하세요</li>
+              <li>맵을 <b>클릭</b> → 자기장 배치</li>
+              <li>색칠된 격자 = 추천 포지션</li>
+              <li><b>격자 클릭</b> → 5가지 지표 확인</li>
+              <li><b>스크롤</b>로 맵 확대/축소</li>
             </ol>
           </div>
         </aside>
@@ -290,5 +288,3 @@ function App() {
     </div>
   );
 }
-
-export default App;

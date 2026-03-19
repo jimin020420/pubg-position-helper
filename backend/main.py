@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from database import engine, Base
 import models  # noqa: F401 — Base.metadata에 4개 테이블 등록
-from routers import positions, pubg_api
+from routers import positions
 
 # DB 테이블 자동 생성
 Base.metadata.create_all(bind=engine)
@@ -18,7 +18,6 @@ app.add_middleware(
 )
 
 app.include_router(positions.router)
-app.include_router(pubg_api.router)
 
 
 @app.get("/")

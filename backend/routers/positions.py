@@ -1,173 +1,208 @@
+"""
+포지션 추천 API
+================
+GET /score   — 유저가 그린 자기장 기준으로 격자별 점수 계산 후 반환
+GET /health  — DB 현황 확인용
+"""
+
 import math
-from fastapi import APIRouter, Depends, Query
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, Query, HTTPException
 from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
 from database import get_db
-from models import PositionRecord
-from clustering import cluster_positions
+from models import Bluezone, Position, Combat
+import config
 
-router = APIRouter(prefix="/positions", tags=["positions"])
-
-
-# ── 응답 스키마 ──────────────────────────────────────
-class PositionPoint(BaseModel):
-    x: float
-    y: float
+router = APIRouter(tags=["score"])
 
 
-class PositionsResponse(BaseModel):
-    map_name: str
-    phase: int
-    total: int
-    points: list[PositionPoint]
+# ── 응답 스키마 ────────────────────────────────────────────────────────────────
+
+class CellScore(BaseModel):
+    rank:             int
+    cx:               float      # 격자 중심 X (게임 좌표)
+    cy:               float      # 격자 중심 Y (게임 좌표)
+    sample_count:     int        # 이 격자에 포함된 포지션 수
+    score:            float      # 종합 점수 (0~1)
+    usage_rate:       float      # ① 사용률
+    survival_rate:    float      # ② 생존율
+    combat_survival:  float      # ③ 교전 생존율
+    win_rate:         float      # ④ 우승 기여율
+    move_success:     float      # ⑤ 이동 성공률
+    low_confidence:   bool       # 샘플 30개 미만이면 True
 
 
-class ZoneStatsResponse(BaseModel):
-    map_name: str
-    phase: int
-    total: int
-    inside: int
-    percent: float
-    points: list[PositionPoint]
+class ScoreResponse(BaseModel):
+    phase:            int
+    matched_matches:  int        # 유사 자기장 매치 수
+    total_positions:  int        # 조회된 총 포지션 수
+    cells:            list[CellScore]
 
 
-class ClusterItem(BaseModel):
-    rank: int
-    cx: float
-    cy: float
-    count: int
-    percent: float
+class HealthResponse(BaseModel):
+    matches:   int
+    positions: int
+    combats:   int
 
 
-class ClustersResponse(BaseModel):
-    map_name: str
-    phase: int
-    total_in_zone: int
-    clusters: list[ClusterItem]
+# ── 헬퍼 ──────────────────────────────────────────────────────────────────────
+
+def _cell_key(x: float, y: float) -> tuple[int, int]:
+    """게임 좌표 → 격자 인덱스 (gi, gj)"""
+    return int(x / config.GRID_CELL_SIZE), int(y / config.GRID_CELL_SIZE)
 
 
-class SearchResponse(BaseModel):
-    map_name: str
-    phase: int
-    matched_matches: int   # 비슷한 자기장 매치 수
-    total_points: int      # 반환된 포지션 수
-    points: list[PositionPoint]
+def _cell_center(gi: int, gj: int) -> tuple[float, float]:
+    """격자 인덱스 → 격자 중심 게임 좌표"""
+    return (gi + 0.5) * config.GRID_CELL_SIZE, (gj + 0.5) * config.GRID_CELL_SIZE
 
 
-# ── 엔드포인트 ───────────────────────────────────────
+def _in_zone(x: float, y: float, cx: float, cy: float, radius: float) -> bool:
+    return math.hypot(x - cx, y - cy) <= radius
 
-@router.get("/{map_name}/{phase}", response_model=PositionsResponse)
-def get_positions(map_name: str, phase: int, db: Session = Depends(get_db)):
-    """특정 맵 + 페이즈의 전체 포지션 반환 (히트맵 초기 표시용)"""
-    rows = (
-        db.query(PositionRecord)
-        .filter(
-            PositionRecord.map_name == map_name,
-            PositionRecord.phase == phase,
+
+# ── 엔드포인트 ─────────────────────────────────────────────────────────────────
+
+@router.get("/score", response_model=ScoreResponse)
+def get_score(
+    phase:     int   = Query(..., ge=1, le=8, description="페이즈 번호 (1~8)"),
+    cx:        float = Query(..., description="자기장 중심 X (게임 좌표 cm)"),
+    cy:        float = Query(..., description="자기장 중심 Y (게임 좌표 cm)"),
+    radius:    float = Query(..., gt=0, description="자기장 반지름 (게임 좌표 cm)"),
+    db: Session = Depends(get_db),
+):
+    """
+    유저가 맵에 그린 자기장을 기준으로 과거 유사 자기장 매치를 검색하고,
+    50×50m 격자별 포지션 점수를 계산해서 상위 격자 목록을 반환합니다.
+
+    점수 = 사용률×0.20 + 생존율×0.30 + 교전생존율×0.20 + 우승기여율×0.20 + 이동성공률×0.10
+    """
+    # ── Step 1: 유사 자기장 검색 ───────────────────────────────────────────────
+    all_bz = db.query(Bluezone).filter(Bluezone.phase == phase).all()
+
+    similar_match_ids: set[str] = set()
+    for bz in all_bz:
+        dist   = math.hypot(bz.center_x - cx, bz.center_y - cy)
+        r_diff = abs(bz.radius - radius) / radius
+        if dist <= config.POS_TOLERANCE and r_diff <= config.RADIUS_TOLERANCE:
+            similar_match_ids.add(bz.match_id)
+
+    if not similar_match_ids:
+        # 유사 자기장 없으면 빈 결과 반환 (에러 아님)
+        return ScoreResponse(
+            phase=phase,
+            matched_matches=0,
+            total_positions=0,
+            cells=[],
         )
+
+    match_ids_list = list(similar_match_ids)
+
+    # ── Step 2: 해당 매치들의 포지션·교전 데이터 조회 ─────────────────────────
+    positions = (
+        db.query(Position)
+        .filter(Position.match_id.in_(match_ids_list), Position.phase == phase)
         .all()
     )
-    points = [PositionPoint(x=r.player_x, y=r.player_y) for r in rows]
-    return PositionsResponse(map_name=map_name, phase=phase, total=len(points), points=points)
-
-
-@router.get("/{map_name}/{phase}/zone", response_model=ZoneStatsResponse)
-def get_zone_stats(
-    map_name: str,
-    phase: int,
-    cx: float = Query(...),
-    cy: float = Query(...),
-    radius: float = Query(...),
-    db: Session = Depends(get_db),
-):
-    """자기장 원 안에 포함되는 포지션 통계 (드래그로 직접 그린 원 기준)"""
-    rows = (
-        db.query(PositionRecord)
-        .filter(PositionRecord.map_name == map_name, PositionRecord.phase == phase)
+    combats = (
+        db.query(Combat)
+        .filter(Combat.match_id.in_(match_ids_list), Combat.phase == phase)
         .all()
     )
-    all_points = [PositionPoint(x=r.player_x, y=r.player_y) for r in rows]
-    inside = [p for p in all_points if math.hypot(p.x - cx, p.y - cy) <= radius]
-    total = len(all_points)
-    percent = round(len(inside) / total * 100, 1) if total > 0 else 0.0
-    return ZoneStatsResponse(
-        map_name=map_name, phase=phase,
-        total=total, inside=len(inside), percent=percent, points=inside,
-    )
 
+    total_positions = len(positions)
+    if total_positions == 0:
+        return ScoreResponse(
+            phase=phase,
+            matched_matches=len(similar_match_ids),
+            total_positions=0,
+            cells=[],
+        )
 
-@router.get("/{map_name}/{phase}/clusters", response_model=ClustersResponse)
-def get_clusters(
-    map_name: str,
-    phase: int,
-    cx: float = Query(...),
-    cy: float = Query(...),
-    radius: float = Query(...),
-    top_n: int = Query(5),
-    db: Session = Depends(get_db),
-):
-    """자기장 원 안 포지션을 DBSCAN 클러스터링해서 추천 포지션 반환"""
-    rows = (
-        db.query(PositionRecord)
-        .filter(PositionRecord.map_name == map_name, PositionRecord.phase == phase)
-        .all()
-    )
-    inside_points = [
-        {"x": r.player_x, "y": r.player_y}
-        for r in rows
-        if math.hypot(r.player_x - cx, r.player_y - cy) <= radius
+    # ── Step 3: 격자별 포지션 분류 (자기장 원 내부만) ─────────────────────────
+    # cell_data: (gi, gj) -> {"pos": [Position], "atk": int, "atk_survived": int}
+    cell_data: dict[tuple, dict] = {}
+
+    for pos in positions:
+        if not _in_zone(pos.x, pos.y, cx, cy, radius):
+            continue
+        key = _cell_key(pos.x, pos.y)
+        if key not in cell_data:
+            cell_data[key] = {"pos": [], "atk": 0, "atk_survived": 0}
+        cell_data[key]["pos"].append(pos)
+
+    # ── Step 4: 격자별 교전 기록 분류 ─────────────────────────────────────────
+    # 교전 위치가 해당 격자에 있으면 그 격자의 교전으로 집계
+    for combat in combats:
+        if not _in_zone(combat.x, combat.y, cx, cy, radius):
+            continue
+        key = _cell_key(combat.x, combat.y)
+        if key not in cell_data:
+            continue  # 포지션이 없는 격자는 집계하지 않음
+        cell_data[key]["atk"]          += 1
+        cell_data[key]["atk_survived"] += combat.attacker_survived
+
+    # ── Step 5: 격자별 5가지 지표 + 종합 점수 계산 ────────────────────────────
+    scored_cells = []
+
+    for (gi, gj), data in cell_data.items():
+        pos_list = data["pos"]
+        n        = len(pos_list)
+
+        usage_rate      = n / total_positions
+        survival_rate   = sum(p.survived_phase for p in pos_list) / n
+        win_rate        = sum(p.won            for p in pos_list) / n
+        move_success    = survival_rate   # survived_phase = 다음 페이즈에 생존 = 이동 성공
+
+        atk = data["atk"]
+        combat_survival = data["atk_survived"] / atk if atk > 0 else 0.0
+
+        score = (
+            config.W_USAGE_RATE      * usage_rate     +
+            config.W_SURVIVAL_RATE   * survival_rate  +
+            config.W_COMBAT_SURVIVAL * combat_survival +
+            config.W_WIN_RATE        * win_rate        +
+            config.W_MOVE_SUCCESS    * move_success
+        )
+
+        ccx, ccy = _cell_center(gi, gj)
+        scored_cells.append({
+            "cx":              ccx,
+            "cy":              ccy,
+            "sample_count":    n,
+            "score":           round(score, 4),
+            "usage_rate":      round(usage_rate,      4),
+            "survival_rate":   round(survival_rate,   4),
+            "combat_survival": round(combat_survival,  4),
+            "win_rate":        round(win_rate,         4),
+            "move_success":    round(move_success,     4),
+            "low_confidence":  n < config.MIN_SAMPLES_CONFIDENCE,
+        })
+
+    # ── Step 6: 점수 내림차순 정렬 → 상위 TOP_N_CELLS 반환 ───────────────────
+    scored_cells.sort(key=lambda c: c["score"], reverse=True)
+    top_cells = scored_cells[: config.TOP_N_CELLS]
+
+    cells = [
+        CellScore(rank=i + 1, **cell)
+        for i, cell in enumerate(top_cells)
     ]
-    results = cluster_positions(points=inside_points, zone_radius=radius, top_n=top_n)
-    clusters = [
-        ClusterItem(rank=r.rank, cx=r.cx, cy=r.cy, count=r.count, percent=r.percent)
-        for r in results
-    ]
-    return ClustersResponse(
-        map_name=map_name, phase=phase,
-        total_in_zone=len(inside_points), clusters=clusters,
-    )
 
-
-@router.get("/{map_name}/{phase}/search", response_model=SearchResponse)
-def search_by_zone(
-    map_name: str,
-    phase: int,
-    cx: float = Query(..., description="자기장 중심 X (게임 좌표)"),
-    cy: float = Query(..., description="자기장 중심 Y (게임 좌표)"),
-    radius: float = Query(..., description="자기장 반지름 (게임 좌표)"),
-    pos_tol: float = Query(50000, description="자기장 중심 허용 오차 (cm, 기본 500m)"),
-    radius_tol: float = Query(0.3, description="반지름 허용 오차 비율 (기본 ±30%)"),
-    db: Session = Depends(get_db),
-):
-    """
-    유저가 지정한 자기장과 비슷한 위치/크기의 자기장이 있었던 과거 매치를 검색,
-    그 매치들에서 플레이어들이 어디 포지션을 잡았는지 반환.
-
-    검색 조건:
-    - 자기장 중심 거리 <= pos_tol
-    - |bluezone_radius - radius| / radius <= radius_tol
-    """
-    rows = (
-        db.query(PositionRecord)
-        .filter(PositionRecord.map_name == map_name, PositionRecord.phase == phase)
-        .all()
-    )
-
-    matched_match_ids = set()
-    matched_points: list[PositionPoint] = []
-
-    for r in rows:
-        dist = math.hypot(r.bluezone_x - cx, r.bluezone_y - cy)
-        radius_diff = abs(r.bluezone_radius - radius) / radius if radius > 0 else 1.0
-
-        if dist <= pos_tol and radius_diff <= radius_tol:
-            matched_match_ids.add(r.match_id)
-            matched_points.append(PositionPoint(x=r.player_x, y=r.player_y))
-
-    return SearchResponse(
-        map_name=map_name,
+    return ScoreResponse(
         phase=phase,
-        matched_matches=len(matched_match_ids),
-        total_points=len(matched_points),
-        points=matched_points,
+        matched_matches=len(similar_match_ids),
+        total_positions=total_positions,
+        cells=cells,
+    )
+
+
+@router.get("/health", response_model=HealthResponse)
+def health(db: Session = Depends(get_db)):
+    """DB에 쌓인 데이터 현황 확인"""
+    from models import Match
+    return HealthResponse(
+        matches   = db.query(Match).count(),
+        positions = db.query(Position).count(),
+        combats   = db.query(Combat).count(),
     )

@@ -1,16 +1,27 @@
 import { useState, useCallback } from "react";
-import { MapContainer, ImageOverlay, Circle, Rectangle, useMapEvents } from "react-leaflet";
+import { MapContainer, TileLayer, Circle, Rectangle, useMapEvents } from "react-leaflet";
 import L from "leaflet";
 import PhaseSelector from "./components/PhaseSelector";
 import "./App.css";
 
 // ── 상수 ─────────────────────────────────────────────────────────────────────
-const MAP_M     = 8160;     // 미터 단위 (Leaflet 좌표계, 816000cm)
+const MAP_M     = 8160;     // 미터 단위 (816000cm)
 const CELL_M    = 50;       // 격자 한 변 (미터)
 const HALF_CELL = CELL_M / 2;
 const MAP_BOUNDS  = [[0, 0], [MAP_M, MAP_M]];
-const INIT_ZOOM   = Math.log2(700 / MAP_M);   // 700px 컨테이너에 맵이 꽉 차는 줌 (≈ -3.54)
 const API = "http://127.0.0.1:8000";
+
+// 커스텀 CRS: 게임 좌표(m) → pubgmap.net 타일 좌표계
+// zoom 0 = 256×256px 타일 1개가 전체 맵 커버
+const pubgCRS = L.extend({}, L.CRS.Simple, {
+  transformation: new L.Transformation(1 / MAP_M, 0, -1 / MAP_M, 1),
+  scale: (z) => 256 * Math.pow(2, z),
+  zoom:  (s) => Math.log2(s / 256),
+  infinite: false,
+});
+
+// 700px 컨테이너에 전체 맵이 꽉 차는 줌 레벨 (≈ 1.45)
+const INIT_ZOOM = Math.log2(700 / 256);
 
 // 에란겔 페이즈별 자기장 반지름 (게임 cm)
 const PHASE_RADII = {
@@ -152,11 +163,11 @@ export default function App() {
           {loading && <div className="banner loading-banner">분석 중...</div>}
 
           <MapContainer
-            crs={L.CRS.Simple}
+            crs={pubgCRS}
             center={[MAP_M / 2, MAP_M / 2]}
             zoom={INIT_ZOOM}
             minZoom={INIT_ZOOM}
-            maxZoom={5}
+            maxZoom={6}
             style={{ width: 700, height: 700 }}
             zoomSnap={0}
             zoomDelta={0.5}
@@ -165,7 +176,13 @@ export default function App() {
             maxBoundsViscosity={1.0}
             attributionControl={false}
           >
-            <ImageOverlay url="/maps/erangel.png" bounds={MAP_BOUNDS} />
+            <TileLayer
+              url="https://tiles3-v2.pubgmap.net/tiles/erangel/v19/{z}/{x}/{y}.png"
+              tileSize={256}
+              minNativeZoom={0}
+              maxNativeZoom={5}
+              noWrap={true}
+            />
             <MapEvents
               phase={phase}
               onZonePlace={handleZonePlace}

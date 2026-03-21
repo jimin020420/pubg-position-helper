@@ -29,8 +29,7 @@ class CellScore(BaseModel):
     survival_rate:    float      # ② 생존율
     combat_survival:  float      # ③ 교전 생존율
     win_rate:         float      # ④ 우승 기여율
-    move_success:     float      # ⑤ 이동 성공률
-    low_confidence:   bool       # 샘플 30개 미만이면 True
+    low_confidence:   bool       # 샘플 5개 미만이면 True
 
 
 class ScoreResponse(BaseModel):
@@ -66,7 +65,7 @@ def _in_zone(x: float, y: float, cx: float, cy: float, radius: float) -> bool:
 
 @router.get("/score", response_model=ScoreResponse)
 def get_score(
-    phase:     int   = Query(..., ge=1, le=8, description="페이즈 번호 (1~8)"),
+    phase:     int   = Query(..., ge=2, le=8, description="페이즈 번호 (2~8)"),
     cx:        float = Query(..., description="자기장 중심 X (게임 좌표 cm)"),
     cy:        float = Query(..., description="자기장 중심 Y (게임 좌표 cm)"),
     radius:    float = Query(..., gt=0, description="자기장 반지름 (게임 좌표 cm)"),
@@ -76,15 +75,16 @@ def get_score(
     유저가 맵에 그린 자기장을 기준으로 과거 유사 자기장 매치를 검색하고,
     50×50m 격자별 포지션 점수를 계산해서 상위 격자 목록을 반환합니다.
 
-    점수 = 사용률×0.20 + 생존율×0.30 + 교전생존율×0.20 + 우승기여율×0.20 + 이동성공률×0.10
+    점수 = 사용률×w1 + 생존율×w2 + 교전생존율×w3 + 우승기여율×w4  (페이즈별 가중치 적용)
     """
     # ── Step 1: 유사 자기장 검색 ───────────────────────────────────────────────
     all_bz = db.query(Bluezone).filter(Bluezone.phase == phase).all()
+    pos_tolerance = radius * config.POS_TOLERANCE_RATIO
 
     similar_match_ids: set[str] = set()
     for bz in all_bz:
         dist = math.hypot(bz.center_x - cx, bz.center_y - cy)
-        if dist <= config.POS_TOLERANCE:  # 반지름은 페이즈로 이미 결정됨
+        if dist <= pos_tolerance:
             similar_match_ids.add(bz.match_id)
 
     if not similar_match_ids:
@@ -142,8 +142,9 @@ def get_score(
         cell_data[key]["atk"]          += 1
         cell_data[key]["atk_survived"] += combat.attacker_survived
 
-    # ── Step 5: 격자별 5가지 지표 + 종합 점수 계산 ────────────────────────────
-    scored_cells = []
+    # ── Step 5: 격자별 4가지 지표 + 종합 점수 계산 ────────────────────────────
+    w_usage, w_survival, w_combat, w_win = config.get_weights(phase)
+    scored_cells: list[dict] = []
 
     for (gi, gj), data in cell_data.items():
         pos_list = data["pos"]
@@ -152,17 +153,16 @@ def get_score(
         usage_rate      = n / total_positions
         survival_rate   = sum(p.survived_phase for p in pos_list) / n
         win_rate        = sum(p.won            for p in pos_list) / n
-        move_success    = survival_rate   # survived_phase = 다음 페이즈에 생존 = 이동 성공
 
         atk = data["atk"]
-        combat_survival = data["atk_survived"] / atk if atk > 0 else 0.0
+        combat_survival = (data["atk_survived"] / atk
+                           if atk > 0 else config.COMBAT_DEFAULT_SCORE)
 
         score = (
-            config.W_USAGE_RATE      * usage_rate     +
-            config.W_SURVIVAL_RATE   * survival_rate  +
-            config.W_COMBAT_SURVIVAL * combat_survival +
-            config.W_WIN_RATE        * win_rate        +
-            config.W_MOVE_SUCCESS    * move_success
+            w_usage    * usage_rate     +
+            w_survival * survival_rate  +
+            w_combat   * combat_survival +
+            w_win      * win_rate
         )
 
         ccx, ccy = _cell_center(gi, gj)
@@ -171,11 +171,10 @@ def get_score(
             "cy":              ccy,
             "sample_count":    n,
             "score":           round(score, 4),
-            "usage_rate":      round(usage_rate,      4),
-            "survival_rate":   round(survival_rate,   4),
-            "combat_survival": round(combat_survival,  4),
-            "win_rate":        round(win_rate,         4),
-            "move_success":    round(move_success,     4),
+            "usage_rate":      round(usage_rate,     4),
+            "survival_rate":   round(survival_rate,  4),
+            "combat_survival": round(combat_survival, 4),
+            "win_rate":        round(win_rate,        4),
             "low_confidence":  n < config.MIN_SAMPLES_CONFIDENCE,
         })
 

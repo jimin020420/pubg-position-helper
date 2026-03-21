@@ -223,6 +223,8 @@ def extract_bluezones_by_phase(events: list, phase_boundaries: list) -> dict:
             continue
 
         phase = get_phase_from_elapsed(elapsed, phase_boundaries)
+        if phase < 2:
+            continue  # 1페이즈 제외
         if phase not in result:
             pos = gs.get("safetyZonePosition", {})
             result[phase] = {
@@ -256,6 +258,8 @@ def extract_position_events(events: list, phase_boundaries: list) -> list:
         x     = loc.get("x", 0)
         y     = loc.get("y", 0)
         phase = get_phase_from_elapsed(event.get("elapsedTime", 0), phase_boundaries)
+        if phase < 2:
+            continue  # 1페이즈 제외
 
         bucket.setdefault((player_id, phase), []).append((x, y))
 
@@ -290,6 +294,8 @@ def extract_kill_events(events: list, phase_boundaries: list) -> list:
 
         loc   = killer.get("location", {})
         phase = get_phase_from_elapsed(event.get("elapsedTime", 0), phase_boundaries)
+        if phase < 2:
+            continue  # 1페이즈 제외
 
         result.append({
             "phase":       phase,

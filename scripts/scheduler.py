@@ -28,6 +28,21 @@ from pathlib import Path
 import schedule
 import time
 
+# ── 기본 플레이어 목록 ─────────────────────────────────────────────────────────
+DEFAULT_PLAYERS = (
+    "AK_696G,8ink-,Douyin_mei1s,salmoong911,C5_c5_C5,murilloMEC,chuhyoung97,1_204,xmpl,"
+    "Hakatory,4AM-HHXS,de4dlySins,humych-,PhilippineDealer,Frant1c-,Drunk_Hades,Gallipoli-,"
+    "911fate,S_olo-,Apr_Epoch,YJARA_YouTube,QEshe4kaa,k1im-,riho4x,JAJA_-,Mogore,"
+    "911maeuntang,crazyluu,ARTASMENETIL,Feyer1st,6bosh,cervi-,MaHeTa,cauan7zin,Agafosha007,"
+    "Ataicheck,Iris_Jy,nawabari_-,ddabuddebu,S_E_T_R_1_X,BaoShangen_-,Jokkatory,"
+    "ZizonJaeMin-_-,LUCKY_-BOY-,D0naT_Ello,KaZaKhStan-04-,POKAMOLODOY,Scr1zzy,MrPozitivzik,"
+    "GuoMaoTianCheng,R0yalFury,SlowMo,avarts,LeftOutSideAL0ne,BieTianDanMM,shengenxx,spyrro88,"
+    "BB0ngzi_Haltzzak,EVilFanXing,DODU_-,rhdiddlsmsajdajd,0_oLEMON,NanMou_GuanRen-,WangShin-_,"
+    "ix8s_-YouTube,having0_v,HIBAKO,JJxxxGx,ANGRYHWAN,Tny7_,whywhywhywhy_-,HalloSenpai,"
+    "NinjinhaT,FN_BreaKers,MUTMIX,Mellman,Bestoloch,Serenityyds,HELLPXR,CreamyBunny,"
+    "QY_x7bb,zhaosimodebaba,T1_Type,KaZra_-,RyuDoYoon,feitanxzol,2cut,KSA_YXXN,GENSALUTE1234567"
+)
+
 # ── 경로 설정 ──────────────────────────────────────────────────────────────────
 SCRIPTS_DIR = Path(__file__).parent
 BACKEND_DIR = SCRIPTS_DIR.parent / "backend"
@@ -64,14 +79,7 @@ def run_collection():
     """collect_telemetry.py 를 서브프로세스로 실행."""
     env_vars = load_env()
 
-    players = env_vars.get("SCHEDULER_PLAYERS", "").strip()
-    if not players:
-        log.error(
-            "SCHEDULER_PLAYERS 가 설정되지 않았습니다.\n"
-            "backend/.env 에 다음을 추가하세요:\n"
-            "  SCHEDULER_PLAYERS=닉네임1,닉네임2,닉네임3"
-        )
-        return
+    players = env_vars.get("SCHEDULER_PLAYERS", "").strip() or DEFAULT_PLAYERS
 
     matches = env_vars.get("SCHEDULER_MATCHES", "10")
 

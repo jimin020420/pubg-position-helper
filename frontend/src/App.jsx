@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { MapContainer, TileLayer, Circle, Rectangle, useMapEvents } from "react-leaflet";
+import { MapContainer, TileLayer, Circle, Rectangle, useMapEvents, useMap } from "react-leaflet";
 import L from "leaflet";
 import PhaseSelector from "./components/PhaseSelector";
 import "./App.css";
@@ -17,7 +17,7 @@ const pubgCRS = L.extend({}, L.CRS.Simple, {
   transformation: new L.Transformation(1 / MAP_M, 0, -1 / MAP_M, 1),
   scale: (z) => 256 * Math.pow(2, z),
   zoom:  (s) => Math.log2(s / 256),
-  infinite: false,
+  // infinite: true (CRS.Simple 기본값 유지 — false로 하면 globalTileRange 계산 오류)
 });
 
 // 700px 컨테이너에 전체 맵이 꽉 차는 줌 레벨 (≈ 1.45)
@@ -51,6 +51,21 @@ const scoreColor = (score, lowConf) => {
   const b = Math.round((1 - score) * 220);
   return `rgba(${r},${g},${b},0.65)`;
 };
+
+// 줌 레벨에 따라 드래그 활성/비활성 전환
+function DragController() {
+  const map = useMap();
+  useMapEvents({
+    zoomend() {
+      if (map.getZoom() > INIT_ZOOM) {
+        map.dragging.enable();
+      } else {
+        map.dragging.disable();
+      }
+    },
+  });
+  return null;
+}
 
 // ── 맵 이벤트 핸들러 (MapContainer 내부에 있어야 함) ──────────────────────────
 function MapEvents({ phase, onZonePlace, zone, cells, onCellClick }) {
@@ -107,7 +122,7 @@ function MapEvents({ phase, onZonePlace, zone, cells, onCellClick }) {
 
 // ── 메인 앱 ───────────────────────────────────────────────────────────────────
 export default function App() {
-  const [phase,        setPhase]        = useState(1);
+  const [phase,        setPhase]        = useState(2);
   const [zone,         setZone]         = useState(null);
   const [cells,        setCells]        = useState([]);
   const [stats,        setStats]        = useState(null);
@@ -179,10 +194,12 @@ export default function App() {
             <TileLayer
               url="https://tiles3-v2.pubgmap.net/tiles/erangel/v19/{z}/{x}/{y}.png"
               tileSize={256}
-              minNativeZoom={0}
+              minNativeZoom={1}
               maxNativeZoom={5}
+              bounds={MAP_BOUNDS}
               noWrap={true}
             />
+            <DragController />
             <MapEvents
               phase={phase}
               onZonePlace={handleZonePlace}
@@ -233,8 +250,7 @@ export default function App() {
                   ["① 사용률",     selectedCell.usage_rate],
                   ["② 생존율",     selectedCell.survival_rate],
                   ["③ 교전 생존율", selectedCell.combat_survival],
-                  ["④ 우승 기여율", selectedCell.win_rate],
-                  ["⑤ 이동 성공률", selectedCell.move_success],
+                  ...(phase >= 4 ? [["④ 우승 기여율", selectedCell.win_rate]] : []),
                 ].map(([label, val]) => (
                   <div key={label} className="detail-item">
                     <span className="detail-label">{label}</span>

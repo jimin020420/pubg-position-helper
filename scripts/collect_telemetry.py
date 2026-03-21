@@ -59,9 +59,15 @@ log = logging.getLogger(__name__)
 # ── PUBG API 호출 헬퍼 ────────────────────────────────────────────────────────
 
 def api_get(client: httpx.Client, url: str, params: dict = None) -> dict:
-    """PUBG API GET 요청. 속도 제한 초과 시 자동 재시도."""
-    for attempt in range(3):
-        resp = client.get(url, params=params, headers=HEADERS, timeout=30)
+    """PUBG API GET 요청. 속도 제한·네트워크 오류 시 자동 재시도."""
+    for attempt in range(5):
+        try:
+            resp = client.get(url, params=params, headers=HEADERS, timeout=30)
+        except (httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError) as e:
+            wait = 15 * (attempt + 1)
+            log.warning(f"네트워크 오류 ({e.__class__.__name__}), {wait}초 후 재시도... ({attempt+1}/5)")
+            time.sleep(wait)
+            continue
         if resp.status_code == 200:
             return resp.json()
         if resp.status_code == 429:
@@ -71,6 +77,7 @@ def api_get(client: httpx.Client, url: str, params: dict = None) -> dict:
             continue
         log.error(f"API 오류 {resp.status_code}: {url}")
         return {}
+    log.error(f"최대 재시도 초과: {url}")
     return {}
 
 

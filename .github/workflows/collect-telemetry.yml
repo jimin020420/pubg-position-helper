@@ -23,12 +23,6 @@ jobs:
           pip install -r backend/requirements.txt
           pip install httpx schedule
 
-      - name: DB 초기화 (테이블 없을 때만 생성)
-        working-directory: backend
-        env:
-          PUBG_API_KEY: ${{ secrets.PUBG_API_KEY }}
-        run: python seed.py
-
       - name: 텔레메트리 수집 실행
         working-directory: scripts
         env:

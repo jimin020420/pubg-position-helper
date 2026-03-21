@@ -23,6 +23,13 @@ jobs:
           pip install -r backend/requirements.txt
           pip install httpx schedule
 
+      - name: DB 캐시 복원 (이전 수집 데이터 이어받기)
+        uses: actions/cache@v4
+        with:
+          path: backend/pubg.db
+          key: pubg-db-persistent
+          restore-keys: pubg-db-persistent
+
       - name: 텔레메트리 수집 실행
         working-directory: scripts
         env:
@@ -32,9 +39,17 @@ jobs:
             --names "${{ secrets.PLAYER_NAMES }}" \
             --matches 5
 
+      - name: DB 캐시 저장
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: backend/pubg.db
+          key: pubg-db-persistent
+
       - name: DB 파일 artifact 저장
         uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: pubg-db-${{ github.run_number }}
           path: backend/pubg.db
-          retention-days: 7
+          retention-days: 30

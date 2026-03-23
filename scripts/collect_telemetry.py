@@ -358,10 +358,11 @@ def extract_match_statistics(events: list) -> dict:
         if pid:
             all_players.add(pid)
 
+    # 킬 로그 기반 폴백은 '마지막 생존자 전원'이 won=1이 되는 문제가 있으므로
+    # won 값을 신뢰할 수 없다 → 전원 won=0 처리 (우승 기여율 계산 제외)
     result = {}
     for pid in all_players:
-        won = 0 if pid in killed_ids else 1
-        result[pid] = {"final_rank": None, "won": won}
+        result[pid] = {"final_rank": None, "won": 0}
 
     return result
 

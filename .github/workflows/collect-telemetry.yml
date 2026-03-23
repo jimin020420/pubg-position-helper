@@ -30,6 +30,22 @@ jobs:
           key: pubg-db-persistent
           restore-keys: pubg-db-persistent
 
+      - name: won 오염 데이터 초기화 (final_rank 없는 폴백 항목만)
+        run: |
+          python - <<'EOF'
+          import sqlite3, os
+          db_path = "backend/pubg.db"
+          if os.path.exists(db_path):
+              conn = sqlite3.connect(db_path)
+              cur = conn.cursor()
+              cur.execute("UPDATE positions SET won = 0 WHERE final_rank IS NULL")
+              print(f"초기화된 행: {cur.rowcount}")
+              conn.commit()
+              conn.close()
+          else:
+              print("DB 없음, 스킵")
+          EOF
+
       - name: 텔레메트리 수집 실행
         working-directory: scripts
         env:

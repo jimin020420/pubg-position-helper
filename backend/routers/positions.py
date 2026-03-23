@@ -110,8 +110,7 @@ def get_score(
         .all()
     )
 
-    total_positions = len(positions)
-    if total_positions == 0:
+    if not positions:
         return ScoreResponse(
             phase=phase,
             matched_matches=len(similar_match_ids),
@@ -122,14 +121,25 @@ def get_score(
     # ── Step 3: 격자별 포지션 분류 (자기장 원 내부만) ─────────────────────────
     # cell_data: (gi, gj) -> {"pos": [Position], "atk": int, "atk_survived": int}
     cell_data: dict[tuple, dict] = {}
+    total_positions: int = 0  # 원 안 포지션만 카운트
 
     for pos in positions:
         if not _in_zone(pos.x, pos.y, cx, cy, radius):
             continue
+        total_positions += 1
         key = _cell_key(pos.x, pos.y)
         if key not in cell_data:
             cell_data[key] = {"pos": [], "atk": 0, "atk_survived": 0}
         cell_data[key]["pos"].append(pos)
+
+    if total_positions == 0:
+        return ScoreResponse(
+            phase=phase,
+            matched_matches=len(similar_match_ids),
+            total_positions=0,
+            cells=[],
+        )
+    total_pos_f: float = float(total_positions)
 
     # ── Step 4: 격자별 교전 기록 분류 ─────────────────────────────────────────
     # 교전 위치가 해당 격자에 있으면 그 격자의 교전으로 집계
@@ -150,7 +160,7 @@ def get_score(
         pos_list = data["pos"]
         n        = len(pos_list)
 
-        usage_rate      = n / total_positions
+        usage_rate      = n / total_pos_f
         survival_rate   = sum(p.survived_phase for p in pos_list) / n
         win_rate        = sum(p.won            for p in pos_list) / n
 
@@ -178,7 +188,8 @@ def get_score(
             "low_confidence":  n < config.MIN_SAMPLES_CONFIDENCE,
         })
 
-    # ── Step 6: 점수 내림차순 정렬 → 상위 TOP_N_CELLS 반환 ───────────────────
+    # ── Step 6: 신뢰도 낮은 격자 제외 → 점수 내림차순 정렬 → 상위 TOP_N_CELLS 반환
+    scored_cells = [c for c in scored_cells if not c["low_confidence"]]
     scored_cells.sort(key=lambda c: c["score"], reverse=True)
     top_cells = scored_cells[: config.TOP_N_CELLS]
 

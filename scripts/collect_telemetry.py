@@ -516,8 +516,8 @@ def main():
 
                 if map_name not in ERANGEL_MAP_NAMES:
                     log.info(f"  에란겔이 아닌 맵({map_name}), 건너뜀 (이후 스킵용으로 저장)")
-                    db.add(Match(match_id=match_id, match_date=match_date,
-                                 total_players=total_players, map_name=map_name))
+                    db.add(Match(match_id=match_id, date=match_date,
+                                 total_players=total_players))
                     db.commit()
                     continue
 

@@ -19,14 +19,12 @@ jobs:
           python-version: "3.11"
 
       - name: 의존성 설치
-        run: |
-          pip install -r backend/requirements.txt
-          pip install httpx schedule
+        run: pip install -r backend/requirements.txt httpx schedule
 
       - name: DB 캐시 복원 (이전 수집 데이터 이어받기)
         uses: actions/cache@v4
         with:
-          path: backend/pubg.db
+          path: backend/pubg_positions.db
           key: pubg-db-persistent
           restore-keys: pubg-db-persistent
 
@@ -34,7 +32,7 @@ jobs:
         run: |
           python - <<'EOF'
           import sqlite3, os
-          db_path = "backend/pubg.db"
+          db_path = "backend/pubg_positions.db"
           if os.path.exists(db_path):
               conn = sqlite3.connect(db_path)
               cur = conn.cursor()
@@ -59,7 +57,7 @@ jobs:
         uses: actions/cache/save@v4
         if: always()
         with:
-          path: backend/pubg.db
+          path: backend/pubg_positions.db
           key: pubg-db-persistent
 
       - name: DB 파일 artifact 저장
@@ -67,5 +65,5 @@ jobs:
         if: always()
         with:
           name: pubg-db-${{ github.run_number }}
-          path: backend/pubg.db
+          path: backend/pubg_positions.db
           retention-days: 30

@@ -160,9 +160,13 @@ def get_score(
         pos_list = data["pos"]
         n        = len(pos_list)
 
-        usage_rate      = n / total_pos_f
-        survival_rate   = sum(p.survived_phase for p in pos_list) / n
-        win_rate        = sum(p.won            for p in pos_list) / n
+        usage_rate    = n / total_pos_f
+        survival_rate = sum(p.survived_phase for p in pos_list) / n
+
+        # 우승 기여율: 매치 단위로 계산 (스쿼드 팀원 중복 방지)
+        matches_in_cell  = {p.match_id for p in pos_list}
+        matches_with_win = {p.match_id for p in pos_list if p.won == 1}
+        win_rate = len(matches_with_win) / len(matches_in_cell)
 
         atk = data["atk"]
         combat_survival = (data["atk_survived"] / atk

@@ -502,6 +502,11 @@ def main():
             for match_id in all_match_ids:
                 log.info(f"  매치: {match_id[:20]}...")
 
+                # API 호출 전 중복 체크 (이미 저장된 매치는 API 콜 없이 스킵)
+                if db.query(Match).filter(Match.match_id == match_id).first():
+                    log.info(f"  이미 수집된 매치, 건너뜀")
+                    continue
+
                 telemetry_url, map_name, match_date, total_players = get_telemetry_url(client, match_id)
                 time.sleep(REQUEST_INTERVAL)
 

@@ -46,8 +46,21 @@ HEADERS = {
     "Accept": "application/vnd.api+json",
 }
 
-# Erangel 맵 이름 (API에서 반환하는 값)
-ERANGEL_MAP_NAMES = {"Baltic_Main", "DihorOtok_Main"}  # Erangel, Erangel Remastered
+# PUBG 내부 맵 이름 → 정규화된 이름
+MAP_NAME_MAP = {
+    "Baltic_Main":    "erangel",
+    "DihorOtok_Main": "erangel",   # Erangel Remastered
+    "Desert_Main":    "miramar",
+    "Savage_Main":    "sanhok",
+    "Tiger_Main":     "taego",
+    "Kiki_Main":      "deston",
+    "Neon_Main":      "rondo",
+    "Chimera_Main":   "paramo",
+    "Heaven_Main":    "haven",
+}
+
+def normalize_map_name(raw: str) -> str:
+    return MAP_NAME_MAP.get(raw, raw.lower().replace("_main", ""))
 
 # API 속도 제한 (무료: 분당 10 요청)
 REQUEST_INTERVAL = 7  # 초
@@ -374,6 +387,7 @@ def save_match_data(
     match_id: str,
     match_date,
     total_players: int,
+    map_name: str,
     bluezones: dict,
     positions: list,
     kills: list,
@@ -406,6 +420,7 @@ def save_match_data(
         match_id=match_id,
         date=match_date,
         total_players=total_players,
+        map_name=map_name,
     ))
 
     for phase, bz in bluezones.items():
@@ -415,6 +430,7 @@ def save_match_data(
             center_x=bz["center_x"],
             center_y=bz["center_y"],
             radius=bz["radius"],
+            map_name=map_name,
         ))
 
     for pos in positions:
@@ -428,6 +444,7 @@ def save_match_data(
             final_rank=player_stat.get("final_rank"),
             survived_phase=pos["survived_phase"],
             won=player_stat.get("won", 0),
+            map_name=map_name,
         ))
 
     for kill in kills:
@@ -440,6 +457,7 @@ def save_match_data(
             attacker_id=kill["attacker_id"],
             victim_id=kill["victim_id"],
             attacker_survived=attacker_stat.get("won", 0),
+            map_name=map_name,
         ))
 
     db.commit()
@@ -514,13 +532,8 @@ def main():
                     log.warning("  Telemetry URL 없음, 건너뜀")
                     continue
 
-                if map_name not in ERANGEL_MAP_NAMES:
-                    log.info(f"  에란겔이 아닌 맵({map_name}), 건너뜀 (이후 스킵용으로 저장)")
-                    db.add(Match(match_id=match_id, date=match_date,
-                                 total_players=total_players))
-                    db.commit()
-                    continue
-
+                normalized_map = normalize_map_name(map_name)
+                log.info(f"  맵: {map_name} → {normalized_map}")
                 log.info("  Telemetry 다운로드 중...")
                 events = download_telemetry(client, telemetry_url)
                 if not events:
@@ -538,7 +551,7 @@ def main():
                 log.info(f"  bluezones={len(bluezones)}, positions={len(positions)}, kills={len(kills)}, players_stats={len(match_stats)}")
 
                 saved = save_match_data(
-                    db, match_id, match_date, total_players,
+                    db, match_id, match_date, total_players, normalized_map,
                     bluezones, positions, kills, match_stats,
                     dry_run=args.dry_run,
                 )

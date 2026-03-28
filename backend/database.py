@@ -1,9 +1,7 @@
 import os
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import declarative_base, sessionmaker
 
-# 이 파일(database.py)이 있는 backend/ 디렉토리를 기준으로 절대경로 사용
-# → scripts/에서 실행해도, uvicorn에서 실행해도 항상 같은 DB 파일을 사용
 _HERE = os.path.dirname(os.path.abspath(__file__))
 DATABASE_URL = f"sqlite:///{_HERE}/pubg_positions.db"
 
@@ -12,8 +10,30 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
+def _migrate(conn):
+    """기존 테이블에 새 컬럼 추가 (없을 때만)."""
+    migrations = [
+        ("matches",   "map_name",  "TEXT"),
+        ("bluezones", "map_name",  "TEXT"),
+        ("positions", "map_name",  "TEXT"),
+        ("combats",   "map_name",  "TEXT"),
+    ]
+    for table, column, col_type in migrations:
+        try:
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
+            conn.commit()
+        except Exception:
+            pass  # 이미 컬럼이 존재하면 무시
+
+
+def init_db():
+    """테이블 생성 + 마이그레이션 실행."""
+    Base.metadata.create_all(bind=engine)
+    with engine.connect() as conn:
+        _migrate(conn)
+
+
 def get_db():
-    """API 요청마다 DB 세션을 열고, 끝나면 닫는 함수"""
     db = SessionLocal()
     try:
         yield db

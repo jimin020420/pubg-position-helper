@@ -10,6 +10,7 @@ class Match(Base):
     match_id      = Column(String, primary_key=True, index=True)
     date          = Column(DateTime, nullable=True)
     total_players = Column(Integer, default=0)
+    map_name      = Column(String, nullable=True, index=True)  # 정규화된 맵 이름
 
     bluezones = relationship("Bluezone", back_populates="match", cascade="all, delete-orphan")
     positions = relationship("Position", back_populates="match", cascade="all, delete-orphan")
@@ -26,6 +27,7 @@ class Bluezone(Base):
     center_x = Column(Float, nullable=False)
     center_y = Column(Float, nullable=False)
     radius   = Column(Float, nullable=False)
+    map_name = Column(String, nullable=True, index=True)
 
     match = relationship("Match", back_populates="bluezones")
 
@@ -40,9 +42,10 @@ class Position(Base):
     player_id      = Column(String, nullable=False, index=True)
     x              = Column(Float, nullable=False)
     y              = Column(Float, nullable=False)
-    final_rank     = Column(Integer, nullable=True)   # LogMatchStatistics에서 채움
-    survived_phase = Column(Integer, default=0)       # 1 = 이 페이즈 끝까지 생존
-    won            = Column(Integer, default=0)        # 1 = 매치 우승
+    final_rank     = Column(Integer, nullable=True)
+    survived_phase = Column(Integer, default=0)
+    won            = Column(Integer, default=0)
+    map_name       = Column(String, nullable=True, index=True)
 
     match = relationship("Match", back_populates="positions")
 
@@ -58,7 +61,8 @@ class Combat(Base):
     y                 = Column(Float, nullable=False)
     attacker_id       = Column(String, nullable=True)
     victim_id         = Column(String, nullable=True)
-    attacker_survived = Column(Integer, default=0)   # 1 = 공격자가 매치 우승
+    attacker_survived = Column(Integer, default=0)
+    map_name          = Column(String, nullable=True, index=True)
 
     match = relationship("Match", back_populates="combats")
 

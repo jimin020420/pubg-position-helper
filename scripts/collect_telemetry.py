@@ -46,18 +46,16 @@ HEADERS = {
     "Accept": "application/vnd.api+json",
 }
 
-# PUBG 내부 맵 이름 → 정규화된 이름
+# 경쟁전 맵만 수집 (내부 맵 이름 → 정규화된 이름)
 MAP_NAME_MAP = {
     "Baltic_Main":    "erangel",
-    "DihorOtok_Main": "erangel",   # Erangel Remastered
     "Desert_Main":    "miramar",
-    "Savage_Main":    "sanhok",
+    "DihorOtok_Main": "vikendi",
     "Tiger_Main":     "taego",
     "Kiki_Main":      "deston",
     "Neon_Main":      "rondo",
-    "Chimera_Main":   "paramo",
-    "Heaven_Main":    "haven",
 }
+COMPETITIVE_MAPS = set(MAP_NAME_MAP.keys())
 
 def normalize_map_name(raw: str) -> str:
     return MAP_NAME_MAP.get(raw, raw.lower().replace("_main", ""))
@@ -530,6 +528,13 @@ def main():
 
                 if not telemetry_url:
                     log.warning("  Telemetry URL 없음, 건너뜀")
+                    continue
+
+                if map_name not in COMPETITIVE_MAPS:
+                    log.info(f"  비경쟁전 맵({map_name}), 건너뜀 (스킵용 저장)")
+                    db.add(Match(match_id=match_id, date=match_date,
+                                 total_players=total_players, map_name=map_name))
+                    db.commit()
                     continue
 
                 normalized_map = normalize_map_name(map_name)

@@ -6,7 +6,7 @@ GET /health  — DB 현황 확인용
 """
 
 import math
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -28,8 +28,9 @@ class CellScore(BaseModel):
     usage_rate:       float      # ① 사용률
     survival_rate:    float      # ② 생존율
     combat_survival:  float      # ③ 교전 생존율
-    win_rate:         float      # ④ 우승 기여율
-    low_confidence:   bool       # 샘플 5개 미만이면 True
+    win_rate:         float      # ④ 우승 기여율 (5~7페이즈만)
+    next_zone_rate:   float      # ⑤ 다음 자기장 겹칠 확률
+    low_confidence:   bool       # 페이즈별 최소 샘플 미달이면 True
 
 
 class ScoreResponse(BaseModel):
@@ -69,17 +70,24 @@ def get_score(
     cx:        float = Query(..., description="자기장 중심 X (게임 좌표 cm)"),
     cy:        float = Query(..., description="자기장 중심 Y (게임 좌표 cm)"),
     radius:    float = Query(..., gt=0, description="자기장 반지름 (게임 좌표 cm)"),
+    map:       str   = Query("erangel", description="맵 이름 (erangel, miramar, sanhok 등)"),
     db: Session = Depends(get_db),
 ):
     """
     유저가 맵에 그린 자기장을 기준으로 과거 유사 자기장 매치를 검색하고,
     50×50m 격자별 포지션 점수를 계산해서 상위 격자 목록을 반환합니다.
 
-    점수 = 사용률×w1 + 생존율×w2 + 교전생존율×w3 + 우승기여율×w4  (페이즈별 가중치 적용)
+    점수 = 사용률×w1 + 생존율×w2 + 교전생존율×w3 + 우승기여율×w4 + 다음자기장×w5
+    (가중치는 페이즈별 차등 적용)
     """
     # ── Step 1: 유사 자기장 검색 ───────────────────────────────────────────────
-    all_bz = db.query(Bluezone).filter(Bluezone.phase == phase).all()
-    pos_tolerance = radius * config.POS_TOLERANCE_RATIO
+    bz_query = db.query(Bluezone).filter(Bluezone.phase == phase)
+    if map:
+        bz_query = bz_query.filter(
+            (Bluezone.map_name == map) | (Bluezone.map_name == None)  # noqa: E711
+        )
+    all_bz = bz_query.all()
+    pos_tolerance = radius * config.get_pos_tolerance_ratio(phase)
 
     similar_match_ids: set[str] = set()
     for bz in all_bz:
@@ -88,27 +96,43 @@ def get_score(
             similar_match_ids.add(bz.match_id)
 
     if not similar_match_ids:
-        # 유사 자기장 없으면 빈 결과 반환 (에러 아님)
         return ScoreResponse(
-            phase=phase,
-            matched_matches=0,
-            total_positions=0,
-            cells=[],
+            phase=phase, matched_matches=0, total_positions=0, cells=[]
         )
 
     match_ids_list = list(similar_match_ids)
 
+    # ── Step 1.5: 다음 페이즈 자기장 사전 조회 ────────────────────────────────
+    next_zones = (
+        db.query(Bluezone)
+        .filter(
+            Bluezone.match_id.in_(match_ids_list),
+            Bluezone.phase == phase + 1,
+        )
+        .all()
+    )
+    next_zone_map: dict[str, Bluezone] = {nz.match_id: nz for nz in next_zones}
+
     # ── Step 2: 해당 매치들의 포지션·교전 데이터 조회 ─────────────────────────
-    positions = (
+    pos_q = (
         db.query(Position)
         .filter(Position.match_id.in_(match_ids_list), Position.phase == phase)
-        .all()
     )
-    combats = (
+    if map:
+        pos_q = pos_q.filter(
+            (Position.map_name == map) | (Position.map_name == None)  # noqa: E711
+        )
+    positions = pos_q.all()
+
+    cbt_q = (
         db.query(Combat)
         .filter(Combat.match_id.in_(match_ids_list), Combat.phase == phase)
-        .all()
     )
+    if map:
+        cbt_q = cbt_q.filter(
+            (Combat.map_name == map) | (Combat.map_name == None)  # noqa: E711
+        )
+    combats = cbt_q.all()
 
     if not positions:
         return ScoreResponse(
@@ -119,9 +143,8 @@ def get_score(
         )
 
     # ── Step 3: 격자별 포지션 분류 (자기장 원 내부만) ─────────────────────────
-    # cell_data: (gi, gj) -> {"pos": [Position], "atk": int, "atk_survived": int}
     cell_data: dict[tuple, dict] = {}
-    total_positions: int = 0  # 원 안 포지션만 카운트
+    total_positions: int = 0
 
     for pos in positions:
         if not _in_zone(pos.x, pos.y, cx, cy, radius):
@@ -142,18 +165,18 @@ def get_score(
     total_pos_f: float = float(total_positions)
 
     # ── Step 4: 격자별 교전 기록 분류 ─────────────────────────────────────────
-    # 교전 위치가 해당 격자에 있으면 그 격자의 교전으로 집계
     for combat in combats:
         if not _in_zone(combat.x, combat.y, cx, cy, radius):
             continue
         key = _cell_key(combat.x, combat.y)
         if key not in cell_data:
-            continue  # 포지션이 없는 격자는 집계하지 않음
+            continue
         cell_data[key]["atk"]          += 1
         cell_data[key]["atk_survived"] += combat.attacker_survived
 
-    # ── Step 5: 격자별 4가지 지표 + 종합 점수 계산 ────────────────────────────
-    w_usage, w_survival, w_combat, w_win = config.get_weights(phase)
+    # ── Step 5: 격자별 5지표 + 종합 점수 계산 ─────────────────────────────────
+    w_usage, w_survival, w_combat, w_win, w_next = config.get_weights(phase)
+    min_samples = config.get_min_samples(phase)
     scored_cells: list[dict] = []
 
     for (gi, gj), data in cell_data.items():
@@ -163,44 +186,60 @@ def get_score(
         usage_rate    = n / total_pos_f
         survival_rate = sum(p.survived_phase for p in pos_list) / n
 
-        # 우승 기여율: 매치 단위로 계산 (스쿼드 팀원 중복 방지)
-        matches_in_cell  = {p.match_id for p in pos_list}
-        matches_with_win = {p.match_id for p in pos_list if p.won == 1}
-        win_rate = len(matches_with_win) / len(matches_in_cell)
+        # 우승 기여율: 5~7페이즈만 계산, 나머지 0
+        matches_in_cell = {p.match_id for p in pos_list}
+        if 5 <= phase <= 7:
+            matches_with_win = {p.match_id for p in pos_list if p.won == 1}
+            win_rate = len(matches_with_win) / len(matches_in_cell)
+        else:
+            win_rate = 0.0
 
         atk = data["atk"]
         combat_survival = (data["atk_survived"] / atk
                            if atk > 0 else config.COMBAT_DEFAULT_SCORE)
 
+        # 다음 자기장 겹칠 확률
+        cell_cx, cell_cy = _cell_center(gi, gj)
+        if next_zone_map:
+            hits = sum(
+                1 for mid in matches_in_cell
+                if mid in next_zone_map and
+                math.hypot(
+                    cell_cx - next_zone_map[mid].center_x,
+                    cell_cy - next_zone_map[mid].center_y,
+                ) <= next_zone_map[mid].radius
+            )
+            next_zone_rate = hits / len(matches_in_cell)
+        else:
+            next_zone_rate = config.NEXT_ZONE_DEFAULT_SCORE
+
         score = (
             w_usage    * usage_rate     +
             w_survival * survival_rate  +
             w_combat   * combat_survival +
-            w_win      * win_rate
+            w_win      * win_rate        +
+            w_next     * next_zone_rate
         )
 
-        ccx, ccy = _cell_center(gi, gj)
         scored_cells.append({
-            "cx":              ccx,
-            "cy":              ccy,
+            "cx":              cell_cx,
+            "cy":              cell_cy,
             "sample_count":    n,
             "score":           round(score, 4),
             "usage_rate":      round(usage_rate,     4),
             "survival_rate":   round(survival_rate,  4),
             "combat_survival": round(combat_survival, 4),
             "win_rate":        round(win_rate,        4),
-            "low_confidence":  n < config.MIN_SAMPLES_CONFIDENCE,
+            "next_zone_rate":  round(next_zone_rate,  4),
+            "low_confidence":  n < min_samples,
         })
 
-    # ── Step 6: 신뢰도 낮은 격자 제외 → 점수 내림차순 정렬 → 상위 TOP_N_CELLS 반환
+    # ── Step 6: 신뢰도 낮은 격자 제외 → 점수 내림차순 → 상위 TOP_N_CELLS 반환
     scored_cells = [c for c in scored_cells if not c["low_confidence"]]
     scored_cells.sort(key=lambda c: c["score"], reverse=True)
     top_cells = scored_cells[: config.TOP_N_CELLS]
 
-    cells = [
-        CellScore(rank=i + 1, **cell)
-        for i, cell in enumerate(top_cells)
-    ]
+    cells = [CellScore(rank=i + 1, **cell) for i, cell in enumerate(top_cells)]
 
     return ScoreResponse(
         phase=phase,
